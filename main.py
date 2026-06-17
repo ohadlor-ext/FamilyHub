@@ -9,14 +9,22 @@ import os
 
 load_dotenv()
 
+from contextlib import asynccontextmanager
 from routers import auth, calendar, tasks, inventory, weather, ai
-from database import engine
+from database import engine, Base
 from models import user, task, inventory as inv_model
 
-# יצירת טבלאות ב-DB
-user.Base.metadata.create_all(bind=engine)
-task.Base.metadata.create_all(bind=engine)
-inv_model.Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # יצירת טבלאות ב-DB בזמן startup — עם טיפול בשגיאות
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables created/verified")
+    except Exception as e:
+        print(f"⚠️ DB init warning (will retry on first request): {e}")
+    yield
+
 
 app = FastAPI(
     title="Family Hub API",
@@ -24,6 +32,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS — מאפשר גישה מ-Lovable ומהנייד

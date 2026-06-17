@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://localhost/familyhub")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost/familyhub")
 
 # Railway מוסיף postgres:// — SQLAlchemy דורש postgresql+pg8000://
 if DATABASE_URL.startswith("postgres://"):

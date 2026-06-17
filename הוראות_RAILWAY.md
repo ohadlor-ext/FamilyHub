@@ -56,7 +56,7 @@
 | `ALGORITHM` | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` |
 | `OPENWEATHER_API_KEY` | ← תמלא אחרי שנרשמת |
-| `WEATHER_CITY` | `Ashdod` |
+| `WEATHER_CITY` | `Bat Yam` |
 | `WEATHER_COUNTRY` | `IL` |
 | `WEATHER_LANG` | `he` |
 | `ANTHROPIC_API_KEY` | ← המפתח שלך מ-console.anthropic.com |
