@@ -37,7 +37,7 @@ class User(Base):
 
     # Relations
     child_profile = relationship("ChildProfile", back_populates="user", uselist=False)
-    tasks = relationship("Task", back_populates="assigned_to_user")
+    tasks = relationship("Task", foreign_keys="Task.assigned_to", back_populates="assigned_to_user")
     inventory_items = relationship("InventoryItem", back_populates="added_by_user")
 
 
