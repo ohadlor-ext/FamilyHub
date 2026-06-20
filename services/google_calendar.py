@@ -1,17 +1,26 @@
 """
 Google Calendar API — שליפת אירועים משפחתיים
 """
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+
 
 def get_calendar_service(access_token: str, refresh_token: str = None):
+    # client_id/client_secret חיוניים כאן: access_token פג תוקף אחרי כשעה,
+    # ובלעדיהם google-auth לא יכול לרענן אותו אוטומטית — ייפול עם RefreshError
+    # ("credentials do not contain the necessary fields... client_id, and client_secret").
     creds = Credentials(
         token=access_token,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
     )
     return build("calendar", "v3", credentials=creds)
 
