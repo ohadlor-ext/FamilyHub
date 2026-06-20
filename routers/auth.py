@@ -57,7 +57,9 @@ def google_callback(code: str, db: Session = Depends(get_db)):
     db.refresh(user)
 
     jwt_token = create_jwt_token(user.id)
-    return RedirectResponse(url=f"{FRONTEND_URL}/auth/success?token={jwt_token}")
+    # /auth/success לא קיים כ-route בפרונט (Lovable) — /login הוא שכבר קולט ?token=
+    # ושומר אותו ב-localStorage (ראה src/routes/login.tsx)
+    return RedirectResponse(url=f"{FRONTEND_URL}/login?token={jwt_token}")
 
 
 @router.get("/me")
