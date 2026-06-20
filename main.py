@@ -36,6 +36,9 @@ app = FastAPI(
 )
 
 # CORS — מאפשר גישה מ-Lovable ומהנייד
+# הערה: ל-CORSMiddleware של Starlette אין תמיכה ב-wildcard (*) בתוך allow_origins —
+# רשימת מחרוזות נבדקת בהשוואה מדויקת בלבד, אז "https://*.lovable.app" לעולם לא תואם
+# לאף Origin אמיתי. לכן השתמשנו ב-allow_origin_regex לתת-דומיינים של lovable.
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
@@ -43,9 +46,8 @@ app.add_middleware(
         FRONTEND_URL,
         "http://localhost:3000",
         "http://localhost:5173",
-        "https://*.lovable.app",
-        "https://*.lovableproject.com",
     ],
+    allow_origin_regex=r"https://([a-zA-Z0-9-]+\.)*lovable\.app|https://([a-zA-Z0-9-]+\.)*lovableproject\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
