@@ -27,7 +27,7 @@ class ChildCreate(BaseModel):
     color_theme: str = "#6C63FF"
 
 
-class ChildUpdate(BaseModel):
+class MemberUpdate(BaseModel):
     name: Optional[str] = None
     age: Optional[int] = None
     grade: Optional[str] = None
@@ -51,19 +51,30 @@ def list_members(
     users = db.query(User).filter(User.is_active == True).all()
     members = []
     for u in users:
+        # לילדים: avatar_emoji/color_theme יושבים ב-ChildProfile.
+        # להורים: אין להם ChildProfile, אז שומרים את אותם שדות בתוך User.settings (JSON קיים) —
+        # כך שאפשר לערוך גם הורים בלי מיגרציה של עמודות חדשות בטבלת users.
+        user_settings = u.settings or {}
+        if u.child_profile:
+            avatar_emoji = u.child_profile.avatar_emoji or "🧒"
+            color_theme = u.child_profile.color_theme or "#6C63FF"
+        else:
+            avatar_emoji = user_settings.get("avatar_emoji") or "🧑"
+            color_theme = user_settings.get("color_theme") or "#6C63FF"
+
         member = {
             "id": u.id,
             "name": u.name,
             "role": u.role,
             "picture": u.picture,
+            "avatar_emoji": avatar_emoji,
+            "color_theme": color_theme,
         }
         if u.child_profile:
             member.update({
                 "age": u.child_profile.age,
                 "grade": u.child_profile.grade,
                 "school": u.child_profile.school,
-                "avatar_emoji": u.child_profile.avatar_emoji,
-                "color_theme": u.child_profile.color_theme,
             })
         members.append(member)
     return {"members": members}
@@ -104,30 +115,40 @@ def create_child(
     return {"message": "פרופיל ילד נוצר", "id": user.id}
 
 
-@router.patch("/children/{child_id}")
-def update_child(
-    child_id: int,
-    update: ChildUpdate,
+@router.patch("/members/{member_id}")
+def update_member(
+    member_id: int,
+    update: MemberUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_dep),
 ):
+    """עדכון פרופיל של כל בן משפחה — הורה או ילד (הורים בלבד יכולים לערוך)"""
     _require_parent(current_user)
 
     user = db.query(User).filter(
-        User.id == child_id, User.role == UserRole.CHILD
+        User.id == member_id, User.is_active == True
     ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="ילד לא נמצא")
+        raise HTTPException(status_code=404, detail="בן משפחה לא נמצא")
 
     if update.name is not None:
         user.name = update.name
 
-    profile = db.query(ChildProfile).filter(ChildProfile.user_id == child_id).first()
-    if profile:
-        for field in ("age", "grade", "school", "subjects", "avatar_emoji", "color_theme"):
-            value = getattr(update, field)
-            if value is not None:
-                setattr(profile, field, value)
+    if user.role == UserRole.CHILD:
+        profile = db.query(ChildProfile).filter(ChildProfile.user_id == member_id).first()
+        if profile:
+            for field in ("age", "grade", "school", "subjects", "avatar_emoji", "color_theme"):
+                value = getattr(update, field)
+                if value is not None:
+                    setattr(profile, field, value)
+    else:
+        # הורה — אין ChildProfile, שומרים emoji/color בתוך User.settings
+        current_settings = dict(user.settings or {})
+        if update.avatar_emoji is not None:
+            current_settings["avatar_emoji"] = update.avatar_emoji
+        if update.color_theme is not None:
+            current_settings["color_theme"] = update.color_theme
+        user.settings = current_settings
 
     db.commit()
     return {"message": "פרופיל עודכן"}
