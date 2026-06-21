@@ -4,6 +4,7 @@ Family Members — ניהול פרופילי ילדים (בלי חיבור Googl
 ידעו עם איזה user_id אמיתי לעבוד — בלי שהילד יצטרך חשבון Google משלו.
 """
 import uuid
+from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,10 +20,14 @@ router = APIRouter(prefix="/family", tags=["family"])
 
 class ChildCreate(BaseModel):
     name: str
-    age: Optional[int] = None
+    age: Optional[int] = None  # גיבוי ידני — אם יש birth_date, הוא קודם
+    birth_date: Optional[date] = None
     grade: Optional[str] = None
     school: Optional[str] = None
     subjects: List[str] = []
+    homework_level: str = "standard"
+    interests: List[str] = []
+    notes: Optional[str] = None
     avatar_emoji: str = "🧒"
     color_theme: str = "#6C63FF"
     email: Optional[str] = None  # Gmail אמיתי של הילד — אם יש, ישמש לקישור אוטומטי בכניסה ראשונה עם Google
@@ -31,9 +36,13 @@ class ChildCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: Optional[str] = None
     age: Optional[int] = None
+    birth_date: Optional[date] = None
     grade: Optional[str] = None
     school: Optional[str] = None
     subjects: Optional[List[str]] = None
+    homework_level: Optional[str] = None
+    interests: Optional[List[str]] = None
+    notes: Optional[str] = None
     avatar_emoji: Optional[str] = None
     color_theme: Optional[str] = None
     email: Optional[str] = None
@@ -42,6 +51,15 @@ class MemberUpdate(BaseModel):
 def _is_synthetic_email(email: str) -> bool:
     """אימייל פיקטיבי שנוצר לילד בלי Gmail אמיתי (ראה create_child) — לא להציג להורה"""
     return email.endswith("@family.local")
+
+
+def _compute_age(birth_date: Optional[date], fallback_age: Optional[int]) -> Optional[int]:
+    """גיל מחושב מתאריך לידה (מתעדכן מעצמו) — עם גיבוי לשדה age הישן לפרופילים שנוצרו לפניו"""
+    if birth_date:
+        today = date.today()
+        had_birthday_this_year = (today.month, today.day) >= (birth_date.month, birth_date.day)
+        return today.year - birth_date.year - (0 if had_birthday_this_year else 1)
+    return fallback_age
 
 
 def _require_parent(user: User):
@@ -82,9 +100,14 @@ def list_members(
         }
         if u.child_profile:
             member.update({
-                "age": u.child_profile.age,
+                "age": _compute_age(u.child_profile.birth_date, u.child_profile.age),
+                "birth_date": u.child_profile.birth_date.isoformat() if u.child_profile.birth_date else None,
                 "grade": u.child_profile.grade,
                 "school": u.child_profile.school,
+                "subjects": u.child_profile.subjects or [],
+                "homework_level": u.child_profile.homework_level,
+                "interests": u.child_profile.interests or [],
+                "notes": u.child_profile.notes,
             })
         members.append(member)
     return {"members": members}
@@ -116,9 +139,13 @@ def create_child(
     profile = ChildProfile(
         user_id=user.id,
         age=child.age,
+        birth_date=child.birth_date,
         grade=child.grade,
         school=child.school,
         subjects=child.subjects,
+        homework_level=child.homework_level,
+        interests=child.interests,
+        notes=child.notes,
         avatar_emoji=child.avatar_emoji,
         color_theme=child.color_theme,
     )
@@ -152,7 +179,10 @@ def update_member(
     if user.role == UserRole.CHILD:
         profile = db.query(ChildProfile).filter(ChildProfile.user_id == member_id).first()
         if profile:
-            for field in ("age", "grade", "school", "subjects", "avatar_emoji", "color_theme"):
+            for field in (
+                "age", "birth_date", "grade", "school", "subjects",
+                "homework_level", "interests", "notes", "avatar_emoji", "color_theme",
+            ):
                 value = getattr(update, field)
                 if value is not None:
                     setattr(profile, field, value)

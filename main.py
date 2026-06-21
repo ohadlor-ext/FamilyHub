@@ -10,6 +10,7 @@ import os
 load_dotenv()
 
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 from routers import auth, calendar, tasks, inventory, weather, ai, family
 from database import engine, Base
 from models import user, task, inventory as inv_model
@@ -23,6 +24,26 @@ async def lifespan(app: FastAPI):
         print("✅ Database tables created/verified")
     except Exception as e:
         print(f"⚠️ DB init warning (will retry on first request): {e}")
+
+    # create_all לא משנה טבלאות שכבר קיימות — עמודות חדשות שמתוספות למודל
+    # (כמו birth_date/interests/notes ב-ChildProfile) צריכות ALTER TABLE ידני.
+    # IF NOT EXISTS הופך את זה לאידמפוטנטי — בטוח להריץ בכל עליית שרת.
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS birth_date DATE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS interests JSON DEFAULT '[]'"
+            ))
+            conn.execute(text(
+                "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS notes TEXT"
+            ))
+            conn.commit()
+        print("✅ Schema columns (birth_date/interests/notes) verified")
+    except Exception as e:
+        print(f"⚠️ Schema migration warning: {e}")
+
     yield
 
 

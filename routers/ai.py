@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from database import get_db
 from routers.auth import get_current_user_dep
+from routers.family import _compute_age
 from models.user import User, UserRole, ChildProfile
 from services.claude_ai import get_homework_help, get_smart_schedule_suggestion
 
@@ -40,10 +41,13 @@ def homework_help(
     result = get_homework_help(
         question=message.question,
         child_name=child_user.name.split()[0],
-        child_age=profile.age if profile else 10,
+        child_age=_compute_age(profile.birth_date, profile.age) if profile else 10,
         child_grade=profile.grade if profile else "ה'",
         subjects=profile.subjects if profile else [],
         conversation_history=message.conversation_history,
+        homework_level=profile.homework_level if profile else "standard",
+        interests=profile.interests if profile else [],
+        school=profile.school if profile else None,
     )
     return HomeworkResponse(**result)
 

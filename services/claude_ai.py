@@ -10,9 +10,9 @@ load_dotenv()
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-SYSTEM_PROMPT_TEMPLATE = """אתה מורה פרטי חכם ואוהב לילד בשם {name}, בן/בת {age} שלומד/ת בכיתה {grade}.
+SYSTEM_PROMPT_TEMPLATE = """אתה מורה פרטי חכם ואוהב לילד בשם {name}, בן/בת {age} שלומד/ת בכיתה {grade}{school_note}.
 מקצועות הלימוד שלו/שלה: {subjects}.
-
+{level_note}{interests_note}
 ## כללים מחייבים:
 1. **אל תיתן תשובות** — תמיד הוביל להבנה דרך שאלות
 2. **שבח מאמץ**, לא תוצאות
@@ -33,6 +33,12 @@ SYSTEM_PROMPT_TEMPLATE = """אתה מורה פרטי חכם ואוהב לילד 
 """
 
 
+_LEVEL_NOTES = {
+    "easy": "ההורה ציין/ה שהילד/ה צריך/ה הסברים פשוטים מאוד ומדורגים בצעדים קטנים, בלי לדלג על שום שלב.\n",
+    "advanced": "ההורה ציין/ה שהילד/ה מתקדם/ת — אפשר לאתגר יותר ולקצר בהסברים בסיסיים.\n",
+}
+
+
 def get_homework_help(
     question: str,
     child_name: str,
@@ -40,12 +46,22 @@ def get_homework_help(
     child_grade: str,
     subjects: list,
     conversation_history: list = None,
+    homework_level: str = "standard",
+    interests: list = None,
+    school: str = None,
 ) -> dict:
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         name=child_name,
         age=child_age,
         grade=child_grade,
+        school_note=f" בבית ספר {school}" if school else "",
         subjects=", ".join(subjects) if subjects else "כללי",
+        level_note=_LEVEL_NOTES.get(homework_level, ""),
+        interests_note=(
+            f"כשרלוונטי, אפשר לקשר הסברים לתחומי העניין שלו/שלה: {', '.join(interests)}.\n"
+            if interests
+            else ""
+        ),
     )
 
     messages = conversation_history or []

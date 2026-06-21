@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Text, JSON, Enum, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -46,11 +46,14 @@ class ChildProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    age = Column(Integer)
+    age = Column(Integer)  # ישן/גיבוי — אם יש birth_date, הגיל מחושב ממנו ולא מהשדה הזה
+    birth_date = Column(Date)  # תאריך לידה — מאפשר חישוב גיל מדויק שמתעדכן מעצמו
     grade = Column(String)
     school = Column(String)
     subjects = Column(JSON, default=[])
     homework_level = Column(String, default="standard")
+    interests = Column(JSON, default=[])  # תחומי עניין/תחביבים
+    notes = Column(Text)  # הערה חופשית — כל מידע נוסף שלא מתאים לשדה ייעודי
     avatar_emoji = Column(String, default="🧒")
     color_theme = Column(String, default="#6C63FF")
 
