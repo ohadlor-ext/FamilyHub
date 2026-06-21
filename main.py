@@ -10,7 +10,7 @@ import os
 load_dotenv()
 
 from contextlib import asynccontextmanager
-from routers import auth, calendar, tasks, inventory, weather, ai
+from routers import auth, calendar, tasks, inventory, weather, ai, family
 from database import engine, Base
 from models import user, task, inventory as inv_model
 
@@ -60,6 +60,7 @@ app.include_router(tasks.router)
 app.include_router(inventory.router)
 app.include_router(weather.router)
 app.include_router(ai.router)
+app.include_router(family.router)
 
 
 @app.get("/")
