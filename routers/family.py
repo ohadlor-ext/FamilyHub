@@ -25,6 +25,7 @@ class ChildCreate(BaseModel):
     subjects: List[str] = []
     avatar_emoji: str = "🧒"
     color_theme: str = "#6C63FF"
+    email: Optional[str] = None  # Gmail אמיתי של הילד — אם יש, ישמש לקישור אוטומטי בכניסה ראשונה עם Google
 
 
 class MemberUpdate(BaseModel):
@@ -35,6 +36,12 @@ class MemberUpdate(BaseModel):
     subjects: Optional[List[str]] = None
     avatar_emoji: Optional[str] = None
     color_theme: Optional[str] = None
+    email: Optional[str] = None
+
+
+def _is_synthetic_email(email: str) -> bool:
+    """אימייל פיקטיבי שנוצר לילד בלי Gmail אמיתי (ראה create_child) — לא להציג להורה"""
+    return email.endswith("@family.local")
 
 
 def _require_parent(user: User):
@@ -69,6 +76,9 @@ def list_members(
             "picture": u.picture,
             "avatar_emoji": avatar_emoji,
             "color_theme": color_theme,
+            # להורים האימייל הוא תמיד אמיתי (זה איך התחברו). לילדים — רק אם הוזן Gmail אמיתי,
+            # לא את הכתובת הפיקטיבית שנוצרת אוטומטית בקיוסק.
+            "email": u.email if (u.role != UserRole.CHILD or not _is_synthetic_email(u.email)) else None,
         }
         if u.child_profile:
             member.update({
@@ -92,7 +102,10 @@ def create_child(
     synthetic_id = f"child-{uuid.uuid4().hex[:12]}"
     user = User(
         google_id=synthetic_id,
-        email=f"{synthetic_id}@family.local",
+        # אם ההורה הזין Gmail אמיתי של הילד — נשמור אותו כדי שכניסה עם Google תשייך
+        # אוטומטית את החשבון לפרופיל הזה (ראה routers/auth.py google_callback).
+        # אחרת, כתובת פיקטיבית — הילד ימשיך להשתמש בקיוסק המשותף בלי Google.
+        email=child.email or f"{synthetic_id}@family.local",
         name=child.name,
         role=UserRole.CHILD,
     )
@@ -133,6 +146,8 @@ def update_member(
 
     if update.name is not None:
         user.name = update.name
+    if update.email is not None and update.email.strip():
+        user.email = update.email.strip()
 
     if user.role == UserRole.CHILD:
         profile = db.query(ChildProfile).filter(ChildProfile.user_id == member_id).first()

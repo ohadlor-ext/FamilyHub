@@ -41,14 +41,26 @@ def google_callback(code: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.google_id == user_info["id"]).first()
 
     if not user:
-        user = User(
-            google_id=user_info["id"],
-            email=user_info["email"],
-            name=user_info["name"],
-            picture=user_info.get("picture"),
-            role=UserRole.PARENT,
+        # ילד שכבר יש לו פרופיל (נוצר ע"י הורה ב-הגדרות, עם ה-Gmail האמיתי שלו) —
+        # כניסה ראשונה עם Google משייכת את החשבון לפרופיל הקיים, במקום ליצור הורה חדש.
+        pending_child = (
+            db.query(User)
+            .filter(User.email == user_info["email"], User.role == UserRole.CHILD)
+            .first()
         )
-        db.add(user)
+        if pending_child:
+            pending_child.google_id = user_info["id"]
+            pending_child.picture = pending_child.picture or user_info.get("picture")
+            user = pending_child
+        else:
+            user = User(
+                google_id=user_info["id"],
+                email=user_info["email"],
+                name=user_info["name"],
+                picture=user_info.get("picture"),
+                role=UserRole.PARENT,
+            )
+            db.add(user)
 
     user.google_access_token = tokens["access_token"]
     user.google_refresh_token = tokens.get("refresh_token", user.google_refresh_token)
