@@ -3,6 +3,7 @@ Claude AI — בוט שיעורי בית חכם
 מוביל ילדים להבנה בלי לתת תשובות מוכנות
 """
 import os
+import json
 import anthropic
 from dotenv import load_dotenv
 
@@ -114,3 +115,69 @@ def get_smart_schedule_suggestion(
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
+
+
+# ---------- זיהוי תמונות עבור מלאי (תחליף לסריקת ברקוד) ----------
+
+PRODUCT_IDENTIFY_PROMPT = """אתה מזהה מוצרי מזון/בית מתוך תמונה עבור אפליקציית ניהול מלאי משפחתית.
+הסתכל בתמונה וזהה את המוצר. החזר JSON בלבד (בלי טקסט נוסף, בלי markdown) במבנה הזה:
+{"name": "<שם המוצר בעברית, קצר וברור>", "category": "<אחת מ: מזון יבש, מוצרי חלב, ירקות ופירות, בשר ודגים, ניקיון, היגיינה, משקאות, חטיפים, קפואים, כללי>", "unit": "<אחת מ: יחידות, קג, גרם, ליטר, מל, אריזות>", "confidence": "<high/medium/low>"}
+אם אינך מצליח לזהות מוצר בבירור, החזר {"name": null, "category": null, "unit": null, "confidence": "low"}"""
+
+
+def identify_product_from_photo(image_b64: str, media_type: str) -> dict:
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+                {"type": "text", "text": PRODUCT_IDENTIFY_PROMPT},
+            ],
+        }],
+    )
+    return _parse_json_response(response.content[0].text, default={
+        "name": None, "category": None, "unit": None, "confidence": "low"
+    })
+
+
+RECEIPT_PARSE_PROMPT_TEMPLATE = """אתה שולף פריטים מתוך תמונה של קבלת קניות, עבור אפליקציית ניהול מלאי משפחתית.
+הסתכל בתמונה וזהה כל פריט מזון/בית שנרכש, עם הכמות שלו.
+פריטי מלאי קיימים במערכת (להתאמה אם זה כנראה אותו פריט): {existing_names}
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown) — מערך של אובייקטים:
+[{{"name": "<שם המוצר בעברית>", "quantity": <מספר>, "unit": "<אחת מ: יחידות, קג, גרם, ליטר, מל, אריזות>", "matched_existing": "<שם מדויק מתוך הרשימה הקיימת אם זה כנראה אותו פריט, אחרת null>"}}]
+אם הקבלה לא ברורה או לא ניתן לקרוא פריטים, החזר מערך ריק []."""
+
+
+def parse_receipt_photo(image_b64: str, media_type: str, existing_names: list) -> list:
+    prompt = RECEIPT_PARSE_PROMPT_TEMPLATE.format(
+        existing_names=", ".join(existing_names) if existing_names else "אין"
+    )
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1500,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+    return _parse_json_response(response.content[0].text, default=[])
+
+
+def _parse_json_response(text: str, default):
+    text = text.strip()
+    # Claude עלול לעטוף ב-```json ... ``` למרות ההנחיה שלא לעשות זאת — מסירים אם קיים
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return default
