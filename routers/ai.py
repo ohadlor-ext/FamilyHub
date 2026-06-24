@@ -56,13 +56,8 @@ def homework_help(
 def schedule_tip(
     current_user: User = Depends(get_current_user_dep),
 ):
-    from services.google_calendar import get_upcoming_events
-    events = get_upcoming_events(
-        access_token=current_user.google_access_token,
-        refresh_token=current_user.google_refresh_token,
-        days_ahead=7,
-        max_results=5,
-    )
+    from services.icloud_calendar import get_upcoming_events
+    events = get_upcoming_events(days_ahead=7, max_results=5)
     tip = get_smart_schedule_suggestion(
         family_events=events,
         tasks=[],
