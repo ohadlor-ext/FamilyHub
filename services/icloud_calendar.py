@@ -31,7 +31,6 @@ def _get_calendars() -> list:
         )
     client = caldav.get_davclient(
         url="https://caldav.icloud.com/",
-        features="icloud",
         username=ICLOUD_USERNAME,
         password=ICLOUD_APP_PASSWORD,
     )
