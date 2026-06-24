@@ -45,7 +45,11 @@ class InventoryItemCreate(BaseModel):
 
 
 class InventoryItemUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
     quantity: Optional[float] = None
+    unit: Optional[InventoryUnit] = None
+    min_quantity: Optional[float] = None
     on_shopping_list: Optional[bool] = None
 
 
@@ -155,6 +159,18 @@ def update_item(
     item = db.query(InventoryItem).filter(InventoryItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="פריט לא נמצא")
+
+    if update_data.name is not None:
+        item.name = update_data.name
+
+    if update_data.category is not None:
+        item.category = update_data.category
+
+    if update_data.unit is not None:
+        item.unit = update_data.unit
+
+    if update_data.min_quantity is not None:
+        item.min_quantity = update_data.min_quantity
 
     if update_data.quantity is not None:
         item.quantity = update_data.quantity
