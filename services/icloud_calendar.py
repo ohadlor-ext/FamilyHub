@@ -71,10 +71,8 @@ def _event_to_dict(event, calendar_name: str, calendar_color: str) -> Optional[d
     return None
 
 
-def get_upcoming_events(days_ahead: int = 7, max_results: int = 20) -> List[dict]:
-    now = datetime.now(timezone.utc)
-    time_max = now + timedelta(days=days_ahead)
-
+def get_events_in_range(start: datetime, end: datetime, max_results: int = 200) -> List[dict]:
+    """אירועים בטווח תאריכים חופשי — משמש לתצוגות יומי/שבועי/חודשי"""
     events = []
     calendars = _get_calendars()
 
@@ -86,7 +84,7 @@ def get_upcoming_events(days_ahead: int = 7, max_results: int = 20) -> List[dict
         cal_color = _CALENDAR_COLORS[i % len(_CALENDAR_COLORS)]
 
         try:
-            results = calendar.search(start=now, end=time_max, event=True, expand=True)
+            results = calendar.search(start=start, end=end, event=True, expand=True)
         except Exception:
             continue
 
@@ -97,6 +95,12 @@ def get_upcoming_events(days_ahead: int = 7, max_results: int = 20) -> List[dict
 
     events.sort(key=lambda e: e["start"])
     return events[:max_results]
+
+
+def get_upcoming_events(days_ahead: int = 7, max_results: int = 20) -> List[dict]:
+    now = datetime.now(timezone.utc)
+    time_max = now + timedelta(days=days_ahead)
+    return get_events_in_range(now, time_max, max_results=max_results)
 
 
 def get_today_events() -> List[dict]:
