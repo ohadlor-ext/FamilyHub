@@ -27,6 +27,7 @@ class ChildCreate(BaseModel):
     subjects: List[str] = []
     homework_level: str = "standard"
     interests: List[str] = []
+    food_preferences: List[str] = []  # מאכלים אהובים — לפיצ'ר הצעת מתכונים
     notes: Optional[str] = None
     avatar_emoji: str = "🧒"
     color_theme: str = "#6C63FF"
@@ -42,6 +43,7 @@ class MemberUpdate(BaseModel):
     subjects: Optional[List[str]] = None
     homework_level: Optional[str] = None
     interests: Optional[List[str]] = None
+    food_preferences: Optional[List[str]] = None
     notes: Optional[str] = None
     avatar_emoji: Optional[str] = None
     color_theme: Optional[str] = None
@@ -107,6 +109,7 @@ def list_members(
                 "subjects": u.child_profile.subjects or [],
                 "homework_level": u.child_profile.homework_level,
                 "interests": u.child_profile.interests or [],
+                "food_preferences": u.child_profile.food_preferences or [],
                 "notes": u.child_profile.notes,
             })
         members.append(member)
@@ -145,6 +148,7 @@ def create_child(
         subjects=child.subjects,
         homework_level=child.homework_level,
         interests=child.interests,
+        food_preferences=child.food_preferences,
         notes=child.notes,
         avatar_emoji=child.avatar_emoji,
         color_theme=child.color_theme,
@@ -181,7 +185,7 @@ def update_member(
         if profile:
             for field in (
                 "age", "birth_date", "grade", "school", "subjects",
-                "homework_level", "interests", "notes", "avatar_emoji", "color_theme",
+                "homework_level", "interests", "food_preferences", "notes", "avatar_emoji", "color_theme",
             ):
                 value = getattr(update, field)
                 if value is not None:

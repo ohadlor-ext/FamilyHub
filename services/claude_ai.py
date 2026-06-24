@@ -169,6 +169,63 @@ def parse_receipt_photo(image_b64: str, media_type: str, existing_names: list) -
     return _parse_json_response(response.content[0].text, default=[])
 
 
+# ---------- הצעת מתכונים לפי מלאי + העדפות משפחה ----------
+
+RECIPE_SUGGEST_PROMPT_TEMPLATE = """אתה שף משפחתי שממליץ מה לבשל הערב למשפחה ישראלית, בהתבסס על המלאי שיש להם בבית כרגע.
+
+המלאי הנוכחי בבית:
+{inventory_text}
+
+מה בני המשפחה אוהבים לאכול (לפי ילד, אם צוין):
+{preferences_text}
+
+המשימה שלך:
+1. הצע מתכון אחד, מעשי וטעים, לארוחת ערב משפחתית.
+2. השתדל להתבסס כמה שאפשר על המלאי הקיים — אבל זה בסדר אם חסר מצרך אחד-שניים, פשוט סמן אותם.
+3. קח בחשבון את מה שהמשפחה אוהבת לאכול, אם צוינו העדפות — בלי להתעלם מהמלאי הקיים בשבילן.
+4. לכל מצרך במתכון, קבע have_in_inventory לפי השוואה סבירה לרשימת המלאי שניתנה (גם אם השם לא זהה מילה במילה, כל עוד זה כנראה אותו מצרך).
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown) במבנה הזה:
+{{
+  "title": "<שם המתכון בעברית>",
+  "description": "<משפט אחד שמתאר את המתכון>",
+  "prep_time_minutes": <מספר, זמן הכנה בדקות>,
+  "servings": <מספר מנות>,
+  "ingredients": [
+    {{"name": "<שם מצרך בעברית>", "quantity": <מספר>, "unit": "<אחת מ: יחידות, קג, גרם, ליטר, מל, אריזות>", "have_in_inventory": <true/false>}}
+  ],
+  "instructions": ["<שלב 1>", "<שלב 2>", "..."]
+}}"""
+
+_DEFAULT_RECIPE = {
+    "title": "לא הצלחנו להציע מתכון כרגע",
+    "description": "נסו שוב בעוד כמה דקות.",
+    "prep_time_minutes": None,
+    "servings": None,
+    "ingredients": [],
+    "instructions": [],
+}
+
+
+def get_recipe_suggestion(inventory_items: list, preferences: list) -> dict:
+    """inventory_items: [{"name","quantity","unit","category"}], preferences: ["<מאכל אהוב>", ...]"""
+    inventory_text = "\n".join(
+        f"- {i['name']} ({i['quantity']} {i['unit']}, {i['category']})" for i in inventory_items
+    ) or "המלאי ריק כרגע"
+    preferences_text = "\n".join(f"- {p}" for p in preferences) or "לא צוינו העדפות מיוחדות"
+
+    prompt = RECIPE_SUGGEST_PROMPT_TEMPLATE.format(
+        inventory_text=inventory_text,
+        preferences_text=preferences_text,
+    )
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(response.content[0].text, default=_DEFAULT_RECIPE)
+
+
 def _parse_json_response(text: str, default):
     text = text.strip()
     # Claude עלול לעטוף ב-```json ... ``` למרות ההנחיה שלא לעשות זאת — מסירים אם קיים

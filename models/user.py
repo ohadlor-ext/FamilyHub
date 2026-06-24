@@ -53,6 +53,7 @@ class ChildProfile(Base):
     subjects = Column(JSON, default=[])
     homework_level = Column(String, default="standard")
     interests = Column(JSON, default=[])  # תחומי עניין/תחביבים
+    food_preferences = Column(JSON, default=[])  # מאכלים אהובים — לפיצ'ר הצעת מתכונים
     notes = Column(Text)  # הערה חופשית — כל מידע נוסף שלא מתאים לשדה ייעודי
     avatar_emoji = Column(String, default="🧒")
     color_theme = Column(String, default="#6C63FF")

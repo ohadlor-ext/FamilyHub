@@ -11,9 +11,9 @@ load_dotenv()
 
 from contextlib import asynccontextmanager
 from sqlalchemy import text
-from routers import auth, calendar, tasks, inventory, weather, ai, family
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes
 from database import engine, Base
-from models import user, task, inventory as inv_model
+from models import user, task, inventory as inv_model, recipe as recipe_model
 
 
 @asynccontextmanager
@@ -39,8 +39,11 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS notes TEXT"
             ))
+            conn.execute(text(
+                "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS food_preferences JSON DEFAULT '[]'"
+            ))
             conn.commit()
-        print("✅ Schema columns (birth_date/interests/notes) verified")
+        print("✅ Schema columns (birth_date/interests/notes/food_preferences) verified")
     except Exception as e:
         print(f"⚠️ Schema migration warning: {e}")
 
@@ -82,6 +85,7 @@ app.include_router(inventory.router)
 app.include_router(weather.router)
 app.include_router(ai.router)
 app.include_router(family.router)
+app.include_router(recipes.router)
 
 
 @app.get("/")
