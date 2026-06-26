@@ -241,3 +241,41 @@ def delete_child(
     user.is_active = False
     db.commit()
     return {"message": "פרופיל הוסר"}
+
+
+@router.delete("/members/{member_id}")
+def delete_member(
+    member_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """מחיקה רכה (is_active=False) של כל בן משפחה — הורה או ילד.
+    שונה מ-/children/{id} בכך שהיא תומכת גם בהורים (למשל פרופיל הורה כפול/שגוי
+    שנוצר בטעות מחיבור Google לא נכון). לא מוחק היסטוריית משימות/שיעורי בית —
+    רשומות קיימות (Task.created_by וכו') ממשיכות להצביע על המשתמש המבוטל."""
+    _require_parent(current_user)
+
+    user = db.query(User).filter(
+        User.id == member_id, User.is_active == True
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="בן משפחה לא נמצא")
+
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="לא ניתן למחוק את הפרופיל המחובר כרגע")
+
+    if user.role == UserRole.PARENT:
+        other_active_parents = db.query(User).filter(
+            User.role == UserRole.PARENT,
+            User.is_active == True,
+            User.id != user.id,
+        ).count()
+        if other_active_parents == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="לא ניתן למחוק את ההורה הפעיל האחרון במשפחה",
+            )
+
+    user.is_active = False
+    db.commit()
+    return {"message": "פרופיל הוסר"}
