@@ -55,6 +55,21 @@ def _is_synthetic_email(email: str) -> bool:
     return email.endswith("@family.local")
 
 
+def _assert_email_available(db: Session, email: str, exclude_user_id: Optional[int] = None) -> None:
+    """מונע מצב שבו אימייל של בן משפחה אחד (למשל הורה) משויך בטעות לפרופיל של בן משפחה אחר —
+    זה בדיוק מה שגרם בעבר להתחברות עם Google "לתפוס" בטעות פרופיל ילד במקום ליצור הורה חדש
+    (ראה routers/auth.py google_callback, שמשייך לפי התאמת אימייל)."""
+    query = db.query(User).filter(User.email == email)
+    if exclude_user_id is not None:
+        query = query.filter(User.id != exclude_user_id)
+    existing = query.first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"האימייל הזה כבר משויך ל{'הורה' if existing.role != UserRole.CHILD else 'ילד'} אחר במשפחה ({existing.name}) — לא ניתן לשייך אותו גם לפרופיל הזה.",
+        )
+
+
 def _compute_age(birth_date: Optional[date], fallback_age: Optional[int]) -> Optional[int]:
     """גיל מחושב מתאריך לידה (מתעדכן מעצמו) — עם גיבוי לשדה age הישן לפרופילים שנוצרו לפניו"""
     if birth_date:
@@ -125,6 +140,9 @@ def create_child(
     """הורה יוצר פרופיל לילד — בלי חיבור Google, לשימוש בקיוסק המשותף"""
     _require_parent(current_user)
 
+    if child.email and child.email.strip():
+        _assert_email_available(db, child.email.strip())
+
     synthetic_id = f"child-{uuid.uuid4().hex[:12]}"
     user = User(
         google_id=synthetic_id,
@@ -178,7 +196,9 @@ def update_member(
     if update.name is not None:
         user.name = update.name
     if update.email is not None and update.email.strip():
-        user.email = update.email.strip()
+        new_email = update.email.strip()
+        _assert_email_available(db, new_email, exclude_user_id=user.id)
+        user.email = new_email
 
     if user.role == UserRole.CHILD:
         profile = db.query(ChildProfile).filter(ChildProfile.user_id == member_id).first()
