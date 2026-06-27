@@ -10,10 +10,15 @@ import os
 load_dotenv()
 
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 from sqlalchemy import text
+from apscheduler.schedulers.background import BackgroundScheduler
 from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes
 from database import engine, Base
 from models import user, task, inventory as inv_model, recipe as recipe_model
+from services.notifications import send_morning_summary, send_recipe_notification
+
+scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
 
 
 @asynccontextmanager
@@ -47,7 +52,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Schema migration warning: {e}")
 
+    # התראות טלגרם יזומות — בוקר טוב ב-07:30, הצעת מתכון ב-16:00 (שעון ישראל).
+    # אם אין TELEGRAM_BOT_TOKEN/TELEGRAM_FAMILY_CHAT_ID ב-env, ה-jobs ירוצו אבל
+    # send_message_sync ידלג בשקט (רושם warning ללוג) — לא יקרוס שום דבר.
+    scheduler.add_job(send_morning_summary, "cron", hour=7, minute=30, id="morning_summary", replace_existing=True)
+    scheduler.add_job(send_recipe_notification, "cron", hour=16, minute=0, id="daily_recipe", replace_existing=True)
+    scheduler.start()
+    print("✅ Scheduler מופעל — בוקר טוב 07:30, מתכון יומי 16:00")
+
     yield
+
+    scheduler.shutdown(wait=False)
 
 
 app = FastAPI(

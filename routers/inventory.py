@@ -11,6 +11,7 @@ from routers.auth import get_current_user_dep
 from models.user import User
 from models.inventory import InventoryItem, ShoppingListItem, InventoryUnit
 from services.claude_ai import identify_product_from_photo, parse_receipt_photo
+from services.notifications import notify_low_stock
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -145,6 +146,10 @@ def add_item(
 
     if item.quantity <= item.min_quantity:
         _add_to_shopping_list(db, item, current_user.id)
+        try:
+            notify_low_stock(item.name)
+        except Exception:
+            pass
 
     return {"message": "פריט נוסף", "item_id": item.id}
 
@@ -177,6 +182,10 @@ def update_item(
         if item.quantity <= item.min_quantity and not item.on_shopping_list:
             item.on_shopping_list = True
             _add_to_shopping_list(db, item, current_user.id)
+            try:
+                notify_low_stock(item.name)
+            except Exception:
+                pass
 
     if update_data.on_shopping_list is not None:
         item.on_shopping_list = update_data.on_shopping_list

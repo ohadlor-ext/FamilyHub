@@ -7,6 +7,7 @@ from database import get_db
 from routers.auth import get_current_user_dep
 from models.user import User, UserRole
 from models.task import Task, TaskStatus, TaskPriority
+from services.notifications import notify_new_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -72,6 +73,16 @@ def create_task(
     db.add(task)
     db.commit()
     db.refresh(task)
+
+    try:
+        assigned_name = None
+        if task.assigned_to:
+            assigned_user = db.query(User).filter(User.id == task.assigned_to).first()
+            assigned_name = assigned_user.name if assigned_user else None
+        notify_new_task(task.title, assigned_name, task.due_date)
+    except Exception:
+        pass  # התראת טלגרם לא צריכה לשבור את יצירת המשימה אם היא נכשלת
+
     return {"message": "משימה נוצרה", "task_id": task.id}
 
 

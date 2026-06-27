@@ -1,8 +1,16 @@
 """
 Telegram Bot — תזכורות, פקודות מהירות, עדכוני משפחה
+
+שני מסלולי שליחה כאן בכוונה:
+- send_reminder/send_family_notification (async, דרך python-telegram-bot) — לשימוש עתידי
+  כשיהיה בוט דו-כיווני אמיתי (פקודות, polling/webhook).
+- send_message_sync (סינכרוני, דרך httpx ישר ל-REST API של Telegram) — זה מה שבפועל
+  משמש כיום את כל ההתראות היזומות (V1): נקרא מתוך routes רגילים (def, לא async) וגם
+  מתוך jobs של ה-scheduler, בלי לדאוג ל-event loop.
 """
 import os
 import logging
+import httpx
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 from dotenv import load_dotenv
@@ -14,6 +22,27 @@ FAMILY_CHAT_ID = os.getenv("TELEGRAM_FAMILY_CHAT_ID")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def send_message_sync(message: str, chat_id: str = None) -> bool:
+    """שליחת הודעה סינכרונית ל-Telegram — לשימוש מתוך routes/scheduler רגילים.
+    לא נכשל בצורה רועשת: אם אין טוקן/chat_id, או אם השליחה נכשלת, רק רושם לוג
+    ומחזיר False — אף פיצ'ר אחר באפליקציה לא צריך לקרוס בגלל זה."""
+    target = chat_id or FAMILY_CHAT_ID
+    if not BOT_TOKEN or not target:
+        logger.warning("Telegram: חסר TELEGRAM_BOT_TOKEN או TELEGRAM_FAMILY_CHAT_ID — הודעה לא נשלחה")
+        return False
+    try:
+        resp = httpx.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": target, "text": message, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Telegram send_message_sync נכשל: {e}")
+        return False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
