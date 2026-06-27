@@ -13,10 +13,11 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
-from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes
-from database import engine, Base
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans
+from database import engine, Base, SessionLocal
 from models import user, task, inventory as inv_model, recipe as recipe_model
 from services.notifications import send_morning_summary, send_recipe_notification
+from services.recipe_seed import seed_recipes_if_empty
 
 scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
 
@@ -51,6 +52,18 @@ async def lifespan(app: FastAPI):
         print("✅ Schema columns (birth_date/interests/notes/food_preferences) verified")
     except Exception as e:
         print(f"⚠️ Schema migration warning: {e}")
+
+    # מתכוני פתיחה למאגר המתכונים — נטען פעם אחת בלבד אם הטבלה ריקה
+    try:
+        seed_db = SessionLocal()
+        try:
+            added = seed_recipes_if_empty(seed_db)
+            if added:
+                print(f"✅ נטענו {added} מתכוני פתיחה למאגר")
+        finally:
+            seed_db.close()
+    except Exception as e:
+        print(f"⚠️ Recipe seed warning: {e}")
 
     # התראות טלגרם יזומות — בוקר טוב ב-07:30, הצעת מתכון ב-16:00 (שעון ישראל).
     # אם אין TELEGRAM_BOT_TOKEN/TELEGRAM_FAMILY_CHAT_ID ב-env, ה-jobs ירוצו אבל
@@ -101,6 +114,7 @@ app.include_router(weather.router)
 app.include_router(ai.router)
 app.include_router(family.router)
 app.include_router(recipes.router)
+app.include_router(meal_plans.router)
 
 
 @app.get("/")
