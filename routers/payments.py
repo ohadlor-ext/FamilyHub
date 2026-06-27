@@ -1,5 +1,6 @@
 """
-תזכורות תשלומים קבועים — ארנונה, ביטוחים, מנויים.
+תזכורות תשלום — תשלומים שצריך לשלם כדי שלא ייווצר חוב או אי-נעימות (ארנונה, ביטוחים,
+מנויים — חזרתיים; אבל גם קנס או חוב חד-פעמי — recurrence=once).
 ניהול (יצירה/עריכה/מחיקה/סימון 'שולם') — הורים בלבד, כי זה תחום פיננסי.
 תזכורת בפועל (טלגרם + קיוסק) — services/notifications.py:send_payment_reminders, קרון ב-main.py.
 """
@@ -106,7 +107,7 @@ def list_payments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_dep),
 ):
-    """כל התשלומים הקבועים, ממוינים מהקרוב ביותר לתאריך יעד — להגדרות וגם לכרטיס בקיוסק"""
+    """כל תזכורות התשלום (חזרתיות וחד-פעמיות), ממוינות מהקרוב ביותר לתאריך יעד — להגדרות וגם לכרטיס בקיוסק"""
     query = db.query(RecurringPayment)
     if not include_inactive:
         query = query.filter(RecurringPayment.is_active == True)
@@ -122,13 +123,13 @@ def create_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_dep),
 ):
-    """הורה מוסיף תשלום קבוע חדש"""
+    """הורה מוסיף תזכורת תשלום חדשה (חזרתית או חד-פעמית)"""
     _require_parent(current_user)
     payment = RecurringPayment(**payment_data.model_dump())
     db.add(payment)
     db.commit()
     db.refresh(payment)
-    return {"message": "תשלום קבוע נוסף", "id": payment.id}
+    return {"message": "תזכורת תשלום נוספה", "id": payment.id}
 
 
 @router.patch("/{payment_id}")
@@ -141,12 +142,12 @@ def update_payment(
     _require_parent(current_user)
     payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
     if not payment:
-        raise HTTPException(status_code=404, detail="תשלום קבוע לא נמצא")
+        raise HTTPException(status_code=404, detail="תזכורת תשלום לא נמצאה")
 
     for field, value in update.model_dump(exclude_none=True).items():
         setattr(payment, field, value)
     db.commit()
-    return {"message": "תשלום קבוע עודכן"}
+    return {"message": "תזכורת תשלום עודכנה"}
 
 
 @router.delete("/{payment_id}")
@@ -158,10 +159,10 @@ def delete_payment(
     _require_parent(current_user)
     payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
     if not payment:
-        raise HTTPException(status_code=404, detail="תשלום קבוע לא נמצא")
-    db.delete(payment)  # cascade="all, delete-orphan" מוחק גם את היסטוריית התשלומים שלו
+        raise HTTPException(status_code=404, detail="תזכורת תשלום לא נמצאה")
+    db.delete(payment)  # cascade="all, delete-orphan" מוחק גם את היסטוריית התשלומים שלה
     db.commit()
-    return {"message": "תשלום קבוע נמחק"}
+    return {"message": "תזכורת תשלום נמחקה"}
 
 
 @router.post("/{payment_id}/mark-paid")
@@ -171,11 +172,14 @@ def mark_paid(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_dep),
 ):
-    """מסמן שהמחזור הנוכחי שולם, רושם בהיסטוריה, ומקדם את התאריך הבא לפי סוג החזרתיות"""
+    """מסמן שהמחזור הנוכחי שולם ורושם בהיסטוריה.
+    חזרתית (שבועי/חודשי/שנתי): מתקדמת אוטומטית לתאריך היעד הבא.
+    חד-פעמית (once): אין מחזור הבא — מסומנת is_active=False ויוצאת מהרשימה הפעילה,
+    אבל ההיסטוריה שלה (PaymentLog) נשארת זמינה ב-GET /payments/{id}/history."""
     _require_parent(current_user)
     payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
     if not payment:
-        raise HTTPException(status_code=404, detail="תשלום קבוע לא נמצא")
+        raise HTTPException(status_code=404, detail="תזכורת תשלום לא נמצאה")
 
     paid_period = payment.next_due_date
     amount_paid = body.amount_paid if body.amount_paid is not None else payment.amount
@@ -185,13 +189,18 @@ def mark_paid(
         period_due_date=paid_period,
         amount_paid=amount_paid,
     ))
-    payment.next_due_date = _advance_due_date(paid_period, payment.recurrence)
+
+    if payment.recurrence == PaymentRecurrence.ONCE:
+        payment.is_active = False
+    else:
+        payment.next_due_date = _advance_due_date(paid_period, payment.recurrence)
     db.commit()
 
     return {
         "message": "סומן ששולם",
         "paid_period": paid_period.isoformat(),
         "next_due_date": payment.next_due_date.isoformat(),
+        "is_active": payment.is_active,
     }
 
 
@@ -203,7 +212,7 @@ def payment_history(
 ):
     payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
     if not payment:
-        raise HTTPException(status_code=404, detail="תשלום קבוע לא נמצא")
+        raise HTTPException(status_code=404, detail="תזכורת תשלום לא נמצאה")
 
     logs = (
         db.query(PaymentLog)

@@ -1,7 +1,11 @@
 """
-תזכורות תשלומים קבועים — ארנונה, ביטוחים, מנויים וכו'.
-כל תשלום קבוע שומר רק את "התאריך הבא לתשלום" (next_due_date); כשמסמנים "שולם",
-ה-due date מתקדם קדימה לפי סוג החזרתיות (שבועי/חודשי/שנתי) — ראו routers/payments.py:_advance_due_date.
+תזכורות תשלום — תשלומים שצריך לשלם כדי שלא ייווצר חוב או אי-נעימות (ארנונה, ביטוחים,
+מנויים, אבל גם קנס או חוב חד-פעמי שחייבים לזכור לשלם).
+כל תזכורת שומרת רק את "התאריך הבא לתשלום" (next_due_date) + סוג חזרתיות (recurrence).
+חזרתית (שבועי/חודשי/שנתי): כשמסמנים "שולם" ה-due date מתקדם קדימה למחזור הבא —
+ראו routers/payments.py:_advance_due_date.
+חד-פעמית (once): כשמסמנים "שולם" היא הופכת ללא-פעילה (is_active=False) ויוצאת
+מהרשימה הפעילה — אין מחזור הבא.
 היסטוריית תשלומים בעבר נשמרת ב-PaymentLog, כדי שאפשר יהיה לראות "מה שולם ומתי".
 """
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean, Text, ForeignKey, Enum
@@ -15,10 +19,12 @@ class PaymentRecurrence(str, enum.Enum):
     WEEKLY = "weekly"
     MONTHLY = "monthly"
     YEARLY = "yearly"
+    ONCE = "once"  # תשלום חד-פעמי — לא חוזר; מסומן לא-פעיל לאחר שסומן "שולם"
 
 
 class RecurringPayment(Base):
-    """תשלום חוזר — למשל 'ארנונה' (חודשי) או 'ביטוח רכב' (שנתי)"""
+    """תזכורת תשלום — חזרתית (למשל 'ארנונה' חודשי, 'ביטוח רכב' שנתי) או חד-פעמית
+    (למשל קנס או חוב ספציפי שצריך לזכור לשלם פעם אחת)"""
     __tablename__ = "recurring_payments"
 
     id = Column(Integer, primary_key=True, index=True)

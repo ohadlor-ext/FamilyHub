@@ -53,6 +53,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Schema migration warning: {e}")
 
+    # הוספת ערך 'once' (תשלום חד-פעמי) ל-enum הקיים בפועל ב-Postgres.
+    # create_all לא משנה enum קיים — ALTER TYPE ... ADD VALUE IF NOT EXISTS אידמפוטנטי,
+    # ורץ מחוץ לכל טרנזקציה שמשתמשת בערך (כדי לא להיתקל במגבלת Postgres על כך).
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TYPE paymentrecurrence ADD VALUE IF NOT EXISTS 'once'"
+            ))
+            conn.commit()
+        print("✅ Schema enum paymentrecurrence: ערך 'once' מאומת")
+    except Exception as e:
+        print(f"⚠️ Enum migration warning: {e}")
+
     # מתכוני פתיחה למאגר המתכונים — נטען פעם אחת בלבד אם הטבלה ריקה
     try:
         seed_db = SessionLocal()
@@ -72,7 +85,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(send_recipe_notification, "cron", hour=16, minute=0, id="daily_recipe", replace_existing=True)
     scheduler.add_job(send_payment_reminders, "cron", hour=8, minute=0, id="payment_reminders", replace_existing=True)
     scheduler.start()
-    print("✅ Scheduler מופעל — בוקר טוב 07:30, מתכון יומי 16:00, תזכורות תשלומים 08:00")
+    print("✅ Scheduler מופעל — בוקר טוב 07:30, מתכון יומי 16:00, תזכורות תשלום 08:00")
 
     yield
 
