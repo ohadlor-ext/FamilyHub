@@ -6,6 +6,7 @@ from database import get_db
 from routers.auth import get_current_user_dep
 from routers.family import _compute_age
 from models.user import User, UserRole, ChildProfile
+from models.task import Task, TaskStatus
 from services.claude_ai import get_homework_help, get_smart_schedule_suggestion
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -54,13 +55,21 @@ def homework_help(
 
 @router.get("/schedule-tip")
 def schedule_tip(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_dep),
 ):
     from services.icloud_calendar import get_upcoming_events
     events = get_upcoming_events(days_ahead=7, max_results=5)
+    open_tasks = (
+        db.query(Task)
+        .filter(Task.status != TaskStatus.DONE)
+        .order_by(Task.due_date.asc().nullslast())
+        .limit(5)
+        .all()
+    )
     tip = get_smart_schedule_suggestion(
         family_events=events,
-        tasks=[],
+        tasks=[{"title": t.title} for t in open_tasks],
         user_name=current_user.name.split()[0],
     )
     return {"tip": tip}
