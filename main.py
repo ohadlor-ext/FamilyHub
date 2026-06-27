@@ -13,9 +13,9 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
-from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments, maintenance
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments, maintenance, rewards
 from database import engine, Base, SessionLocal
-from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model, payment as payment_model, maintenance as maintenance_model
+from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model, payment as payment_model, maintenance as maintenance_model, rewards as rewards_model
 from services.notifications import send_morning_summary, send_recipe_notification, send_payment_reminders, send_maintenance_reminders
 from services.recipe_seed import seed_recipes_if_empty
 
@@ -69,6 +69,18 @@ async def lifespan(app: FastAPI):
         print("✅ עמודת recurring_payments.recurrence הומרה ל-VARCHAR (לא תלויה יותר ב-Postgres enum)")
     except Exception as e:
         print(f"⚠️ Recurrence column migration warning: {e}")
+
+    # עמודה חדשה ב-tasks (טבלה קיימת) — מערכת תגמולי הנקודות (models/rewards.py)
+    # צריכה לסמן על המשימה שכבר זיכינו עליה נקודות, כדי לא לזכות פעמיים.
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS points_awarded BOOLEAN DEFAULT FALSE"
+            ))
+            conn.commit()
+        print("✅ עמודת tasks.points_awarded אומתה")
+    except Exception as e:
+        print(f"⚠️ points_awarded column migration warning: {e}")
 
     # מתכוני פתיחה למאגר המתכונים — נטען פעם אחת בלבד אם הטבלה ריקה
     try:
@@ -137,6 +149,7 @@ app.include_router(meal_plans.router)
 app.include_router(routines.router)
 app.include_router(payments.router)
 app.include_router(maintenance.router)
+app.include_router(rewards.router)
 
 
 @app.get("/")

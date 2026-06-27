@@ -219,3 +219,12 @@ def notify_low_stock(item_name: str):
     """נשלח בזמן אמת כשפריט חוצה את כמות המינימום ונוסף לרשימת הקניות
     (נקרא מתוך routers/inventory.py)."""
     send_message_sync(f"🛒 נגמר/נמוך במלאי: *{item_name}* — נוסף לרשימת הקניות")
+
+
+def notify_reward_redeemed(child_name: str, reward_name: str, point_cost: int, new_balance: int):
+    """נשלח בזמן אמת כשילד ממש תגמול מהקטלוג (נקרא מתוך routers/rewards.py).
+    בכוונה אין התראה מקבילה על כל זיכוי נקודות (משימה/שגרה) — זה יהיה רעשני
+    מאוד (כל צ'ק-בוקס שגרה), בניגוד למימוש שהוא אירוע נדיר וחשוב יותר להורה."""
+    send_message_sync(
+        f"🎁 {child_name} מימש/ה: *{reward_name}* ({point_cost} נקודות) — יתרה נשארה: {new_balance}"
+    )

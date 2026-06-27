@@ -40,4 +40,9 @@ class Task(Base):
     is_recurring = Column(Boolean, default=False)
     recurrence_rule = Column(String)
 
+    # נקודות תגמול (ראו models/rewards.py) — מסומן True בפעם הראשונה שהמשימה הושלמה,
+    # ונשאר True לתמיד (גם אם פותחים את המשימה שוב) כדי שלא יהיה אפשר "לחזור על
+    # סימון בוצע" ולקבל נקודות כפולות על אותה משימה.
+    points_awarded = Column(Boolean, default=False)
+
     assigned_to_user = relationship("User", foreign_keys=[assigned_to], back_populates="tasks")

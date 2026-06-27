@@ -8,6 +8,7 @@ from routers.auth import get_current_user_dep
 from models.user import User, UserRole
 from models.task import Task, TaskStatus, TaskPriority
 from services.notifications import notify_new_task
+from services.rewards import get_config, award_points
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -99,10 +100,22 @@ def update_task(
     if current_user.role == UserRole.CHILD and task.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="אין הרשאה")
 
+    was_done = task.status == TaskStatus.DONE
     for field, value in update_data.model_dump(exclude_none=True).items():
         setattr(task, field, value)
     if update_data.status == TaskStatus.DONE:
         task.completed_at = datetime.utcnow()
+        # זיכוי נקודות (ראו services/rewards.py) — רק בפעם הראשונה שהמשימה הופכת
+        # ל"בוצע" (לא בכל לחיצה חוזרת), ורק אם היא משויכת לילד (לא להורה).
+        if not was_done and not task.points_awarded:
+            assignee = task.assigned_to_user
+            if assignee and assignee.role == UserRole.CHILD:
+                config = get_config(db)
+                award_points(
+                    db, assignee.id, config.points_per_task,
+                    "task", f"השלמת משימה: {task.title}", source_id=task.id,
+                )
+                task.points_awarded = True
 
     db.commit()
     return {"message": "משימה עודכנה"}

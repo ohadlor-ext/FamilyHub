@@ -15,6 +15,7 @@ from database import get_db
 from models.user import User, UserRole
 from models.routine import RoutineItem, RoutineCompletion, RoutineType
 from routers.auth import get_current_user_dep
+from services.rewards import get_config, award_points
 
 router = APIRouter(prefix="/routines", tags=["routines"])
 
@@ -265,11 +266,24 @@ def toggle_completion(
         RoutineCompletion.date == today,
     ).first()
 
+    config = get_config(db)
     if existing:
+        # ביטול סימון — מחזירים גם את הנקודות (תנועה הפוכה ביומן, לא מחיקה).
+        # שונה מהתנהגות המשימות (routers/tasks.py): שם אין דריסה, כי שם המטרה
+        # היא למנוע "פארמינג" של נקודות; כאן ה-toggle עצמו מיועד לתיקון טעות
+        # מהירה (ראו docstring), אז סימטרי שגם הנקודות יתבטלו עם הביטול.
         db.delete(existing)
+        award_points(
+            db, item.child_id, -config.points_per_routine_item,
+            "routine", f"ביטול סימון: {item.title}", source_id=item.id,
+        )
         db.commit()
         return {"completed": False}
 
     db.add(RoutineCompletion(routine_item_id=item_id, date=today))
+    award_points(
+        db, item.child_id, config.points_per_routine_item,
+        "routine", f"השלמת שגרה: {item.title}", source_id=item.id,
+    )
     db.commit()
     return {"completed": True}
