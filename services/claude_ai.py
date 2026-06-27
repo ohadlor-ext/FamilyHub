@@ -293,6 +293,102 @@ def import_recipe_from_content(raw_content: str, url: str) -> dict:
     return _parse_json_response(response.content[0].text, default={"title": None})
 
 
+# ---------- פינת AI לילדים: סיפור, סקרנות, חידה/בדיחה, רעיון יצירה ----------
+
+def _age_note(age: int) -> str:
+    if age <= 6:
+        return "מאוד פשוט: משפטים קצרים, מילים יומיומיות, בלי עלילה מסובכת או הפשטות."
+    if age <= 9:
+        return "פשוט וברור, אפשר עלילה קצרה עם שלב-שלב, משפטים לא ארוכים."
+    return "אפשר עלילה מורכבת יותר, משפטים ארוכים יותר ואוצר מילים עשיר יותר."
+
+
+AI_CORNER_STORY_PROMPT = """אתה מספר סיפורי לילה טוב לילדים, כותב בעברית פשוטה ומתאימה לגיל.
+כתוב סיפור לילה טוב קצר (כ-150-300 מילים) לילד/ה בשם {name}, בגיל {age}{interests_note}{topic_note}.
+
+## כללים מחייבים:
+1. סיפור חמים, מרגיע ומתאים לקראת שינה — בלי מתח, פחד או אלימות; סוף טוב וחיובי
+2. רמת שפה: {age_note}
+3. עברית פשוטה וברורה, בלי תוכן בוגר בכל אופן
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
+{{"title": "<שם קצר לסיפור>", "content": "<גוף הסיפור, פסקאות מופרדות ב-\\n\\n>"}}"""
+
+AI_CORNER_CURIOSITY_PROMPT = """אתה עוזר סקרן וחם שעונה לילדים על שאלות "למה?" ושאלות סקרנות על העולם, בעברית פשוטה.
+הילד/ה {name}, בגיל {age}, שאל/ה: "{topic}"
+
+## כללים מחייבים:
+1. תשובה קצרה ומעניינת (2-4 משפטים), רמת שפה: {age_note}
+2. תעורר סקרנות נוספת — אפשר לסיים בשאלה קטנה שמזמינה חשיבה
+3. תשובה מדויקת ככל האפשר, בלי להמציא עובדות — אם לא בטוח, אפשר לומר את זה בפשטות
+4. אם השאלה נושקת לנושא רגיש (מוות, מחלה, פחד וכו'), ענה בעדינות ובקצרה והפנה לשיחה עם הורה
+5. עברית פשוטה, חמה ותומכת, בלי תוכן בוגר בכל אופן
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
+{{"title": "<השאלה בקצרה>", "content": "<התשובה>"}}"""
+
+AI_CORNER_RIDDLE_JOKE_PROMPT = """אתה ממציא חידה אחת או בדיחה אחת מצחיקה ומתאימה לילדים, בעברית.
+לילד/ה בשם {name}, בגיל {age}{topic_note}.
+
+## כללים מחייבים:
+1. תוכן קליל ומשעשע, רמת שפה: {age_note}, בלי תוכן פוגעני/מפחיד/בוגר
+2. אם זו חידה — כתוב את החידה, שורה ריקה, "---", שורה ריקה, ואז את הפתרון
+3. אם זו בדיחה — קצרה וברורה, עם פאנץ' פשוט לגיל הזה
+4. עברית פשוטה
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
+{{"title": "<'חידה' או 'בדיחה'>", "content": "<הטקסט המלא, כולל פתרון לחידה אם רלוונטי>"}}"""
+
+AI_CORNER_CREATIVE_PROMPT = """אתה נותן רעיון יצירתי אחד לציור או יצירה לילד/ה, בעברית — לא תמונה, רק תיאור מילולי שמעורר דמיון (לא הוראות טכניות "איך לצייר").
+לילד/ה בשם {name}, בגיל {age}{interests_note}{topic_note}.
+
+## כללים מחייבים:
+1. תאר בקצרה (2-4 משפטים) רעיון מקורי וכיפי לציור/יצירה — דמות, עולם, או סיטואציה מדומיינת
+2. עורר דמיון: מה-לצייר, לא איך-לצייר
+3. רמת שפה: {age_note}, חיובי ומשעשע, בלי תוכן בוגר/מפחיד
+4. עברית פשוטה
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
+{{"title": "<שם קצר לרעיון>", "content": "<התיאור>"}}"""
+
+_AI_CORNER_TEMPLATES = {
+    "story": AI_CORNER_STORY_PROMPT,
+    "curiosity": AI_CORNER_CURIOSITY_PROMPT,
+    "riddle_joke": AI_CORNER_RIDDLE_JOKE_PROMPT,
+    "creative": AI_CORNER_CREATIVE_PROMPT,
+}
+
+_AI_CORNER_DEFAULT = {"title": None, "content": "לא הצלחנו ליצור תוכן כרגע. נסו שוב בעוד כמה דקות."}
+
+
+def get_ai_corner_content(
+    content_type: str,
+    child_name: str,
+    child_age: int,
+    interests: list = None,
+    topic: str = None,
+) -> dict:
+    """content_type: story / curiosity / riddle_joke / creative.
+    topic: לסקרנות זו השאלה עצמה (חובה); לאחרים נושא/בקשה חופשית-אופציונלית."""
+    template = _AI_CORNER_TEMPLATES[content_type]
+    prompt = template.format(
+        name=child_name,
+        age=child_age,
+        age_note=_age_note(child_age),
+        interests_note=(
+            f", שאוהב/ת {', '.join(interests)}" if interests else ""
+        ),
+        topic_note=(f", בנושא/בקשה: {topic}" if topic and content_type != "curiosity" else ""),
+        topic=topic or "",
+    )
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=600,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(response.content[0].text, default=_AI_CORNER_DEFAULT)
+
+
 def _parse_json_response(text: str, default):
     text = text.strip()
     # Claude עלול לעטוף ב-```json ... ``` למרות ההנחיה שלא לעשות זאת — מסירים אם קיים
