@@ -226,6 +226,45 @@ def get_recipe_suggestion(inventory_items: list, preferences: list) -> dict:
     return _parse_json_response(response.content[0].text, default=_DEFAULT_RECIPE)
 
 
+# ---------- ייבוא מתכון מעמוד אינטרנט בודד (URL) ----------
+
+RECIPE_IMPORT_PROMPT_TEMPLATE = """אתה עוזר שמייבא מתכון אחד עבור משפחה ישראלית, מתוך תוכן שנשלף מעמוד אינטרנט בודד (לפי בקשה ידנית של המשתמש לעצמו, לא סריקה אוטומטית של אתר שלם).
+המקור: {url}
+
+תוכן גולמי שנשלף מהעמוד (עלול להיות JSON-LD מבני של schema.org/Recipe, ו/או טקסט גלוי מהעמוד):
+{raw_content}
+
+המשימה שלך:
+1. חלץ את שם המתכון, תיאור קצר, זמן הכנה כולל בדקות (שדות prepTime/cookTime/totalTime אם קיימים מגיעים בפורמט ISO 8601 כמו "PT20M" שזה 20 דקות, או "PT1H30M" שזה 90 דקות — תמיר למספר דקות), מספר מנות, רשימת מצרכים מבנית (שם+כמות+יחידה — אם הכמות לא ברורה מהטקסט, תנחש כמות סבירה ביחידה "יחידות"), ותגיות רלוונטיות (למשל "צמחוני", "קל הכנה", "מתאים לילדים", "טבעוני" — רק אם זה ברור מהתוכן).
+2. את אופן ההכנה כתוב **במילים שלך, בקצרה ובבירור, כרשימת שלבים** — אסור להעתיק את הטקסט המקורי מילה במילה (שיקולי זכויות יוצרים), רק לתאר את אותן פעולות בניסוח עצמאי.
+3. אם שפת המקור אינה עברית, תרגם ונסח הכל בעברית.
+4. אם מידע מסוים חסר/לא ברור (לדוגמה זמן הכנה), השאר null במקום להמציא מספר שרירותי.
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown) במבנה הזה:
+{{
+  "title": "<שם המתכון או null אם לא נמצא מתכון בתוכן>",
+  "description": "<תיאור קצר או null>",
+  "prep_time_minutes": <מספר או null>,
+  "servings": <מספר או null>,
+  "ingredients": [{{"name": "<שם מצרך בעברית>", "quantity": <מספר>, "unit": "<אחת מ: יחידות, קג, גרם, ליטר, מל, אריזות>"}}],
+  "instructions": ["<שלב 1, מנוסח עצמאית>", "..."],
+  "tags": ["<תגית>", "..."]
+}}
+אם לא הצלחת לזהות מתכון כלשהו בתוכן, החזר {{"title": null}}."""
+
+
+def import_recipe_from_content(raw_content: str, url: str) -> dict:
+    """raw_content: JSON-LD מחולץ או טקסט גלוי מהעמוד (כבר חתוך לאורך סביר ע"י הקורא).
+    מחזיר תצוגה מקדימה בלבד — לא שומר. ההוראות מנוסחות מחדש ע"י קלוד, לא מועתקות."""
+    prompt = RECIPE_IMPORT_PROMPT_TEMPLATE.format(url=url, raw_content=raw_content)
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(response.content[0].text, default={"title": None})
+
+
 def _parse_json_response(text: str, default):
     text = text.strip()
     # Claude עלול לעטוף ב-```json ... ``` למרות ההנחיה שלא לעשות זאת — מסירים אם קיים

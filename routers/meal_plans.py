@@ -4,9 +4,12 @@
 כאן המתכון קבוע במאגר (Recipe) ומשובץ ליום מסוים בשבוע (MealPlan).
 גרסה ראשונה: ארוחות ערב בלבד (meal_type=dinner), אבל הסכמה לא קשיחה לזה.
 """
+import json
+import re
 from datetime import date, timedelta
 from typing import List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,6 +19,7 @@ from routers.auth import get_current_user_dep
 from models.user import User
 from models.recipe import Recipe, MealPlan, MealType, RecipeSource
 from routers.recipes import _active_inventory
+from services.claude_ai import import_recipe_from_content
 
 router = APIRouter(prefix="/meal-plans", tags=["meal-plans"])
 
@@ -38,6 +42,10 @@ class MealPlanUpsert(BaseModel):
     meal_type: MealType = MealType.DINNER
     recipe_id: Optional[int] = None
     notes: Optional[str] = None
+
+
+class RecipeImportIn(BaseModel):
+    url: str
 
 
 def _recipe_to_dict(recipe: Recipe) -> Optional[dict]:
@@ -94,6 +102,93 @@ def create_recipe(
     db.commit()
     db.refresh(recipe)
     return _recipe_to_dict(recipe)
+
+
+# ---------- ייבוא מתכון מעמוד אינטרנט בודד ----------
+
+def _extract_jsonld_recipe(html: str) -> Optional[dict]:
+    """מחפש בלוקי JSON-LD (<script type="application/ld+json">) עם
+    @type: Recipe — זה התקן ה-schema.org שגוגל דורש מאתרי מתכונים בשביל
+    rich results, אז כל אתר מתכונים רציני חושף את זה ישירות לקריאה
+    ממוכנת. עדיף מאוד על parsing טקסט חופשי כשקיים."""
+    for match in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html, re.DOTALL | re.IGNORECASE,
+    ):
+        raw = match.group(1).strip()
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        blocks = data if isinstance(data, list) else [data]
+        expanded = []
+        for item in blocks:
+            if isinstance(item, dict) and isinstance(item.get("@graph"), list):
+                expanded.extend(item["@graph"])
+            else:
+                expanded.append(item)
+
+        for item in expanded:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("@type")
+            types = item_type if isinstance(item_type, list) else [item_type]
+            if any(t == "Recipe" for t in types if t):
+                return item
+    return None
+
+
+def _strip_html_to_text(html: str) -> str:
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+@router.post("/recipes/import-url")
+def import_recipe_from_url(
+    body: RecipeImportIn,
+    _=Depends(get_current_user_dep),
+):
+    """שולף מתכון אחד מ-URL חיצוני (לפי בקשה ידנית של המשתמש, לא סריקה
+    אוטומטית של אתר שלם) ומחזיר תצוגה מקדימה לעריכה/אישור — לא שומר
+    אוטומטית למאגר (שמירה בפועל היא קריאה נפרדת ל-POST /recipes הקיים,
+    בדיוק כמו תבנית סקירה→אישור של זיהוי קבלות). מנסה קודם JSON-LD מבני
+    (schema.org/Recipe), ונופל לטקסט גלוי מהעמוד אם אין. בשני המקרים קלוד
+    הוא שמנסח את אופן ההכנה במילים שלו — לא מעתיק טקסט מקורי (זכויות יוצרים)."""
+    try:
+        resp = httpx.get(
+            body.url,
+            timeout=15,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; FamilyHubRecipeImport/1.0)"},
+        )
+        resp.raise_for_status()
+        html = resp.text
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=400, detail=f"לא הצלחנו לגשת לכתובת הזו: {e}")
+
+    jsonld = _extract_jsonld_recipe(html)
+    raw_content = json.dumps(jsonld, ensure_ascii=False)[:8000] if jsonld else _strip_html_to_text(html)[:8000]
+
+    if not raw_content:
+        raise HTTPException(status_code=422, detail="לא נמצא תוכן מתכון בעמוד הזה")
+
+    parsed = import_recipe_from_content(raw_content, body.url)
+    if not parsed.get("title"):
+        raise HTTPException(status_code=422, detail="לא הצלחנו לזהות מתכון בעמוד הזה — אפשר להוסיף אותו ידנית")
+
+    return {
+        "title": parsed.get("title"),
+        "description": parsed.get("description"),
+        "meal_type": MealType.DINNER,
+        "prep_time_minutes": parsed.get("prep_time_minutes"),
+        "servings": parsed.get("servings") or 4,
+        "ingredients": parsed.get("ingredients") or [],
+        "instructions": parsed.get("instructions") or [],
+        "tags": parsed.get("tags") or [],
+        "source_url": body.url,
+    }
 
 
 # ---------- תכנון שבועי ----------
