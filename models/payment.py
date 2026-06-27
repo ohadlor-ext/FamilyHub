@@ -8,7 +8,7 @@
 מהרשימה הפעילה — אין מחזור הבא.
 היסטוריית תשלומים בעבר נשמרת ב-PaymentLog, כדי שאפשר יהיה לראות "מה שולם ומתי".
 """
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean, Text, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -30,7 +30,10 @@ class RecurringPayment(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     amount = Column(Float, nullable=True)  # אופציונלי — לא כל תשלום קבוע בסכום קבוע
-    recurrence = Column(Enum(PaymentRecurrence), nullable=False)
+    # VARCHAR רגיל ולא Postgres native enum בכוונה: enum מובנה ב-DB מחייב ALTER TYPE
+    # ידני בכל הוספת ערך (וזה בדיוק מה שקרס בפרודקשן כשנוסף 'once' — ראו main.py).
+    # הולידציה על הערכים התקפים נשארת בצד Python/Pydantic (PaymentRecurrence + routers/payments.py).
+    recurrence = Column(String(20), nullable=False)
     next_due_date = Column(Date, nullable=False)
     remind_days_before = Column(Integer, nullable=False, default=3)
     notes = Column(String, nullable=True)

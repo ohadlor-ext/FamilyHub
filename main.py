@@ -53,18 +53,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Schema migration warning: {e}")
 
-    # הוספת ערך 'once' (תשלום חד-פעמי) ל-enum הקיים בפועל ב-Postgres.
-    # create_all לא משנה enum קיים — ALTER TYPE ... ADD VALUE IF NOT EXISTS אידמפוטנטי,
-    # ורץ מחוץ לכל טרנזקציה שמשתמשת בערך (כדי לא להיתקל במגבלת Postgres על כך).
+    # עמודת recurrence הוגדרה בעבר כ-Postgres native ENUM. זה מה שגרם לבאג: הוספת ערך
+    # 'once' חייבה ALTER TYPE ADD VALUE שנכשל בפועל בפרודקשן (מסיבה שלא נחשפה בלוגים),
+    # וכל ניסיון לשמור תשלום חד-פעמי קרס ב-500 — ומכיוון ש-CORSMiddleware לא מוסיף
+    # headers לתגובות 500 לא-מטופלות, זה נראה בדפדפן כ"Failed to fetch"/CORS error
+    # ולא כשגיאת API רגילה. הפתרון הקבוע: models/payment.py הוגדר כעת כ-VARCHAR(20)
+    # רגיל (ולא enum), אז לא תהיה תלות ב-DB schema בכל הוספת ערך עתידית. השורה הבאה
+    # ממירה את העמודה הקיימת בפועל מ-enum ל-varchar — אידמפוטנטית (לא קורסת אם כבר הומרה).
     try:
         with engine.connect() as conn:
             conn.execute(text(
-                "ALTER TYPE paymentrecurrence ADD VALUE IF NOT EXISTS 'once'"
+                "ALTER TABLE recurring_payments ALTER COLUMN recurrence TYPE VARCHAR(20) USING recurrence::text"
             ))
             conn.commit()
-        print("✅ Schema enum paymentrecurrence: ערך 'once' מאומת")
+        print("✅ עמודת recurring_payments.recurrence הומרה ל-VARCHAR (לא תלויה יותר ב-Postgres enum)")
     except Exception as e:
-        print(f"⚠️ Enum migration warning: {e}")
+        print(f"⚠️ Recurrence column migration warning: {e}")
 
     # מתכוני פתיחה למאגר המתכונים — נטען פעם אחת בלבד אם הטבלה ריקה
     try:
