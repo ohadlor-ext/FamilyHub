@@ -18,6 +18,7 @@ from models.task import Task, TaskStatus
 from models.user import ChildProfile
 from models.inventory import InventoryItem
 from models.payment import RecurringPayment
+from models.maintenance import MaintenanceItem
 from services.telegram_bot import send_message_sync
 from services.icloud_calendar import get_today_events
 from services.openweather import get_current_weather
@@ -156,6 +157,53 @@ def send_payment_reminders():
         send_message_sync("\n".join(lines))
     except Exception as e:
         logger.error(f"send_payment_reminders נכשל: {e}")
+    finally:
+        db.close()
+
+
+def send_maintenance_reminders():
+    """נשלח כל בוקר (קרון ב-main.py, 08:05) — תזכורת מאוחדת אחת על כל פריט תחזוקת
+    הבית (מכשיר/רכב/ביטוח/מסמך) שמתקרב/הגיע/עבר את תאריך היעד שלו.
+    פריט שעבר את התאריך ולא סומן 'בוצע' יחזור להופיע כל יום (overdue) עד שיסמנו
+    אותו — בכוונה, כדי שלא יישכח (אותה לוגיקה כמו send_payment_reminders)."""
+    db = SessionLocal()
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+        items = db.query(MaintenanceItem).filter(MaintenanceItem.is_active == True).all()
+
+        overdue, due_today, due_soon = [], [], []
+        for item in items:
+            days_until = (item.next_due_date - today).days
+            if days_until < 0:
+                overdue.append((item, days_until))
+            elif days_until == 0:
+                due_today.append(item)
+            elif days_until == item.remind_days_before:
+                due_soon.append((item, days_until))
+
+        if not (overdue or due_today or due_soon):
+            return  # אין מה להזכיר היום — לא שולחת הודעה בכלל
+
+        lines = ["🔧 *תחזוקת הבית*"]
+
+        if overdue:
+            lines.append("\n🔴 *באיחור:*")
+            for item, days_until in overdue:
+                lines.append(f"  • {item.name} — באיחור של {abs(days_until)} ימים")
+
+        if due_today:
+            lines.append("\n🟠 *היום מועד הטיפול/החידוש:*")
+            for item in due_today:
+                lines.append(f"  • {item.name}")
+
+        if due_soon:
+            lines.append("\n🟡 *מתקרב:*")
+            for item, days_until in due_soon:
+                lines.append(f"  • {item.name} — בעוד {days_until} ימים")
+
+        send_message_sync("\n".join(lines))
+    except Exception as e:
+        logger.error(f"send_maintenance_reminders נכשל: {e}")
     finally:
         db.close()
 

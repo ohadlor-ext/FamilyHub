@@ -169,6 +169,34 @@ def parse_receipt_photo(image_b64: str, media_type: str, existing_names: list) -
     return _parse_json_response(response.content[0].text, default=[])
 
 
+# ---------- זיהוי פריטי תחזוקת בית / מסמכים מתוך תמונה ----------
+
+MAINTENANCE_IDENTIFY_PROMPT = """אתה מזהה פריט תחזוקת בית או מסמך/ביטוח מתוך תמונה (תווית מכשיר, מדבקת
+דגם, תעודת אחריות, פוליסת ביטוח, רישיון רכב), עבור אפליקציית ניהול בית משפחתית.
+הסתכל בתמונה וחלץ מה שאתה יכול. החזר JSON בלבד (בלי טקסט נוסף, בלי markdown) במבנה הזה:
+{"name": "<שם קצר וברור לפריט בעברית, למשל 'מזגן סלון - LG' או 'ביטוח דירה - הראל'>", "category": "<אחת מ: מכשיר, רכב, ביטוח, מסמך, אחר>", "next_due_date": "<תאריך תפוגה/חידוש/טיפול הבא בפורמט YYYY-MM-DD אם מצאת בתמונה, אחרת null>", "provider_name": "<שם החברה/יצרן/טכנאי אם מצוין, אחרת null>", "confidence": "<high/medium/low>"}
+אם אינך מצליח לזהות פריט בבירור, החזר {"name": null, "category": null, "next_due_date": null, "provider_name": null, "confidence": "low"}"""
+
+
+def identify_maintenance_item_from_photo(image_b64: str, media_type: str) -> dict:
+    """תחליף להקלדה ידנית בתחזוקת הבית — תמונת תווית/מסמך → הצעה לטופס.
+    לא שומר את התמונה עצמה (אותו עיקרון כמו identify_product_from_photo למלאי)."""
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+                {"type": "text", "text": MAINTENANCE_IDENTIFY_PROMPT},
+            ],
+        }],
+    )
+    return _parse_json_response(response.content[0].text, default={
+        "name": None, "category": None, "next_due_date": None, "provider_name": None, "confidence": "low"
+    })
+
+
 # ---------- הצעת מתכונים לפי מלאי + העדפות משפחה ----------
 
 RECIPE_SUGGEST_PROMPT_TEMPLATE = """אתה שף משפחתי שממליץ מה לבשל הערב למשפחה ישראלית, בהתבסס על המלאי שיש להם בבית כרגע.

@@ -13,10 +13,10 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
-from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments, maintenance
 from database import engine, Base, SessionLocal
-from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model, payment as payment_model
-from services.notifications import send_morning_summary, send_recipe_notification, send_payment_reminders
+from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model, payment as payment_model, maintenance as maintenance_model
+from services.notifications import send_morning_summary, send_recipe_notification, send_payment_reminders, send_maintenance_reminders
 from services.recipe_seed import seed_recipes_if_empty
 
 scheduler = BackgroundScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
@@ -88,8 +88,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(send_morning_summary, "cron", hour=7, minute=30, id="morning_summary", replace_existing=True)
     scheduler.add_job(send_recipe_notification, "cron", hour=16, minute=0, id="daily_recipe", replace_existing=True)
     scheduler.add_job(send_payment_reminders, "cron", hour=8, minute=0, id="payment_reminders", replace_existing=True)
+    scheduler.add_job(send_maintenance_reminders, "cron", hour=8, minute=5, id="maintenance_reminders", replace_existing=True)
     scheduler.start()
-    print("✅ Scheduler מופעל — בוקר טוב 07:30, מתכון יומי 16:00, תזכורות תשלום 08:00")
+    print("✅ Scheduler מופעל — בוקר טוב 07:30, מתכון יומי 16:00, תזכורות תשלום 08:00, תחזוקת הבית 08:05")
 
     yield
 
@@ -135,6 +136,7 @@ app.include_router(recipes.router)
 app.include_router(meal_plans.router)
 app.include_router(routines.router)
 app.include_router(payments.router)
+app.include_router(maintenance.router)
 
 
 @app.get("/")
