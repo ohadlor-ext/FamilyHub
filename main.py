@@ -13,9 +13,9 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
-from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines
 from database import engine, Base, SessionLocal
-from models import user, task, inventory as inv_model, recipe as recipe_model
+from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model
 from services.notifications import send_morning_summary, send_recipe_notification
 from services.recipe_seed import seed_recipes_if_empty
 
@@ -115,6 +115,7 @@ app.include_router(ai.router)
 app.include_router(family.router)
 app.include_router(recipes.router)
 app.include_router(meal_plans.router)
+app.include_router(routines.router)
 
 
 @app.get("/")
