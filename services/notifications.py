@@ -11,11 +11,13 @@
 import asyncio
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from database import SessionLocal
 from models.task import Task, TaskStatus
 from models.user import ChildProfile
 from models.inventory import InventoryItem
+from models.payment import RecurringPayment
 from services.telegram_bot import send_message_sync
 from services.icloud_calendar import get_today_events
 from services.openweather import get_current_weather
@@ -104,6 +106,55 @@ def send_recipe_notification():
         send_message_sync(msg)
     except Exception as e:
         logger.error(f"send_recipe_notification נכשל: {e}")
+    finally:
+        db.close()
+
+
+def send_payment_reminders():
+    """נשלח כל בוקר (קרון ב-main.py, 08:00) — תזכורת מאוחדת אחת על כל תשלום קבוע
+    שמתקרב/הגיע/עבר את תאריך היעד שלו. תשלום שעבר את התאריך ולא סומן 'שולם' יחזור
+    להופיע כל יום (overdue) עד שיסמנו אותו — בכוונה, כדי שלא יישכח."""
+    db = SessionLocal()
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+        payments = db.query(RecurringPayment).filter(RecurringPayment.is_active == True).all()
+
+        overdue, due_today, due_soon = [], [], []
+        for p in payments:
+            days_until = (p.next_due_date - today).days
+            if days_until < 0:
+                overdue.append((p, days_until))
+            elif days_until == 0:
+                due_today.append(p)
+            elif days_until == p.remind_days_before:
+                due_soon.append((p, days_until))
+
+        if not (overdue or due_today or due_soon):
+            return  # אין מה להזכיר היום — לא שולחת הודעה בכלל
+
+        lines = ["💰 *תזכורת תשלומים קבועים*"]
+
+        if overdue:
+            lines.append("\n🔴 *באיחור:*")
+            for p, days_until in overdue:
+                amount = f" ({p.amount:.0f}₪)" if p.amount else ""
+                lines.append(f"  • {p.title}{amount} — באיחור של {abs(days_until)} ימים")
+
+        if due_today:
+            lines.append("\n🟠 *היום מועד התשלום:*")
+            for p in due_today:
+                amount = f" ({p.amount:.0f}₪)" if p.amount else ""
+                lines.append(f"  • {p.title}{amount}")
+
+        if due_soon:
+            lines.append("\n🟡 *מתקרב:*")
+            for p, days_until in due_soon:
+                amount = f" ({p.amount:.0f}₪)" if p.amount else ""
+                lines.append(f"  • {p.title}{amount} — בעוד {days_until} ימים")
+
+        send_message_sync("\n".join(lines))
+    except Exception as e:
+        logger.error(f"send_payment_reminders נכשל: {e}")
     finally:
         db.close()
 
