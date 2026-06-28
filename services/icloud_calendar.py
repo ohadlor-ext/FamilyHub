@@ -134,6 +134,26 @@ def _get_target_calendar():
     return calendars[0]
 
 
+def list_calendars() -> List[dict]:
+    """שמות כל היומנים בחשבון ה-iCloud, וסימון איזה מהם נבחר כיעד לכתיבה (כמו ב-_get_target_calendar).
+    אנדפוינט אבחון בלבד (ר' routers/calendar.py GET /calendar/calendars) — שימושי כשcreate_event
+    נכשל עם 403/AuthorizationError, כדי לזהות איזה יומן בחשבון הוא לא-כתיב (למשל יומן חגים/ימי
+    הולדת/משותף לקריאה בלבד) ולהגדיר את השם המדויק של היומן הכתיב ב-ICLOUD_CALENDAR_NAME ב-Railway."""
+    calendars = _get_calendars()
+    names = []
+    for cal in calendars:
+        try:
+            names.append(cal.name)
+        except Exception:
+            names.append(None)
+
+    target_index = 0
+    if ICLOUD_CALENDAR_NAME and ICLOUD_CALENDAR_NAME in names:
+        target_index = names.index(ICLOUD_CALENDAR_NAME)
+
+    return [{"name": name, "is_write_target": i == target_index} for i, name in enumerate(names)]
+
+
 def create_event(
     title: str,
     start: datetime,

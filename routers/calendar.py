@@ -3,9 +3,22 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from routers.auth import get_current_user_dep
 from models.user import User
-from services.icloud_calendar import get_upcoming_events, get_today_events, get_events_in_range
+from services.icloud_calendar import get_upcoming_events, get_today_events, get_events_in_range, list_calendars
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
+
+
+@router.get("/calendars")
+def calendars_list():
+    """רשימת שמות היומנים בחשבון ה-iCloud (ללא תוכן/אירועים, לא רגיש) — אנדפוינט אבחון בכוונה
+    בלי אימות, כדי שאפשר לפתוח את הכתובת ישירות בדפדפן. is_write_target=true מסמן את היומן
+    שאליו create_event כותב כרגע. שימושי אם הוספת אירוע נכשלת עם 403/AuthorizationError —
+    כלומר היומן שנבחר אוטומטית אינו כתיב — כדי לזהות את השם המדויק של היומן הנכון
+    ולהגדיר אותו ב-ICLOUD_CALENDAR_NAME ב-Railway."""
+    try:
+        return {"calendars": list_calendars()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.get("/events")
