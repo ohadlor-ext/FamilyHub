@@ -24,6 +24,11 @@ ICLOUD_APP_PASSWORD = os.getenv("ICLOUD_APP_PASSWORD")
 # לא משפיע על קריאה (get_events_in_range קוראת מכולם) — רק על create_event. אם לא מוגדר,
 # או שאין יומן בשם הזה, נכתב ליומן הראשון שמוחזר.
 ICLOUD_CALENDAR_NAME = os.getenv("ICLOUD_CALENDAR_NAME")
+# אופציונלי — מספר אינדקס (0,1,2...) לפי הסדר שמוחזר מ-GET /calendar/calendars. גובר על
+# ICLOUD_CALENDAR_NAME אם שניהם מוגדרים. קיים כי ב-iCloud אפשר שיהיו כמה יומנים בעלי שם
+# זהה (למשל כמה יומנים שכולם נקראים "Family" — אחד מהם יומן השיתוף המשפחתי האמיתי,
+# אחרים עלולים להיות עותקים/הזמנות-שיתוף ישנות) — שם בלבד לא מספיק כדי להבדיל ביניהם.
+ICLOUD_CALENDAR_INDEX = os.getenv("ICLOUD_CALENDAR_INDEX")
 
 # צבעי ברנד (לילך/סגול) — מחזור צבעים אם יש כמה יומנים בחשבון ה-iCloud
 _CALENDAR_COLORS = ["#8B5CF6", "#A78BFA", "#F472B6", "#6D28D9"]
@@ -114,44 +119,114 @@ def get_today_events() -> List[dict]:
     return get_upcoming_events(days_ahead=1)
 
 
-def _get_target_calendar():
-    """בוחר את היומן שאליו ייכתבו אירועים חדשים. אם הוגדר ICLOUD_CALENDAR_NAME — מחפש
-    יומן בשם הזה (לדוגמה אם יש כמה יומנים בחשבון, כמו 'לוח שנה' + 'ימי הולדת' לקריאה-בלבד
-    מאפל — לא נרצה לכתוב בטעות ליומן הלא נכון); אחרת לוקח את הראשון שמוחזר."""
-    calendars = _get_calendars()
-    if not calendars:
-        raise RuntimeError("לא נמצא יומן ב-iCloud ליצירת אירוע")
+def _resolve_target_index(calendars: list) -> int:
+    """הלוגיקה המשותפת ל-_get_target_calendar ול-list_calendars לבחירת אינדקס היומן.
+    סדר עדיפות: ICLOUD_CALENDAR_INDEX (אם תקין וב-טווח) > ICLOUD_CALENDAR_NAME (התאמה
+    ראשונה לפי שם) > 0 (היומן הראשון שמוחזר, ברירת מחדל)."""
+    if ICLOUD_CALENDAR_INDEX is not None and ICLOUD_CALENDAR_INDEX != "":
+        try:
+            idx = int(ICLOUD_CALENDAR_INDEX)
+            if 0 <= idx < len(calendars):
+                return idx
+            logger.warning(
+                f"ICLOUD_CALENDAR_INDEX={idx} מחוץ לטווח (יש {len(calendars)} יומנים בחשבון)"
+            )
+        except ValueError:
+            logger.warning(f"ICLOUD_CALENDAR_INDEX='{ICLOUD_CALENDAR_INDEX}' אינו מספר תקין — מתעלם")
+
     if ICLOUD_CALENDAR_NAME:
-        for cal in calendars:
+        for i, cal in enumerate(calendars):
             try:
                 if cal.name == ICLOUD_CALENDAR_NAME:
-                    return cal
+                    return i
             except Exception:
                 continue
         logger.warning(
             f"ICLOUD_CALENDAR_NAME='{ICLOUD_CALENDAR_NAME}' לא נמצא בין היומנים בחשבון — נכתב ליומן הראשון"
         )
-    return calendars[0]
+
+    return 0
+
+
+def _get_target_calendar():
+    """בוחר את היומן שאליו ייכתבו אירועים חדשים — ר' _resolve_target_index לסדר העדיפות
+    (ICLOUD_CALENDAR_INDEX / ICLOUD_CALENDAR_NAME / היומן הראשון שמוחזר)."""
+    calendars = _get_calendars()
+    if not calendars:
+        raise RuntimeError("לא נמצא יומן ב-iCloud ליצירת אירוע")
+    return calendars[_resolve_target_index(calendars)]
 
 
 def list_calendars() -> List[dict]:
-    """שמות כל היומנים בחשבון ה-iCloud, וסימון איזה מהם נבחר כיעד לכתיבה (כמו ב-_get_target_calendar).
-    אנדפוינט אבחון בלבד (ר' routers/calendar.py GET /calendar/calendars) — שימושי כשcreate_event
-    נכשל עם 403/AuthorizationError, כדי לזהות איזה יומן בחשבון הוא לא-כתיב (למשל יומן חגים/ימי
-    הולדת/משותף לקריאה בלבד) ולהגדיר את השם המדויק של היומן הכתיב ב-ICLOUD_CALENDAR_NAME ב-Railway."""
+    """שמות כל היומנים בחשבון ה-iCloud (עם index, כי iCloud יכול להחזיר כמה יומנים בעלי שם
+    זהה — למשל כמה יומנים שכולם נקראים 'Family' — ושם בלבד לא תמיד מספיק כדי להבדיל
+    ביניהם), וסימון איזה מהם נבחר כיעד לכתיבה כרגע (כמו ב-_get_target_calendar). אנדפוינט
+    אבחון (ר' routers/calendar.py GET /calendar/calendars) — שימושי כש-create_event נכשל
+    עם 403/AuthorizationError, כדי לזהות איזה יומן הוא לא-כתיב. ר' גם test_write_access
+    לבדיקה בפועל (לא רק לפי שם/הרשאות מוצהרות) כשיש כמה יומנים בעלי שם זהה."""
     calendars = _get_calendars()
-    names = []
-    for cal in calendars:
+    target_index = _resolve_target_index(calendars) if calendars else -1
+
+    result = []
+    for i, cal in enumerate(calendars):
         try:
-            names.append(cal.name)
+            name = cal.name
         except Exception:
-            names.append(None)
+            name = None
+        result.append({"index": i, "name": name, "is_write_target": i == target_index})
+    return result
 
-    target_index = 0
-    if ICLOUD_CALENDAR_NAME and ICLOUD_CALENDAR_NAME in names:
-        target_index = names.index(ICLOUD_CALENDAR_NAME)
 
-    return [{"name": name, "is_write_target": i == target_index} for i, name in enumerate(names)]
+_TEST_EVENT_TITLE = "🔧 בדיקת FamilyHub — אפשר למחוק"
+
+
+def test_write_access(cleanup: bool = False) -> List[dict]:
+    """בודק בפועל (לא רק לפי שם) על אילו יומנים בחשבון אפשר ליצור אירוע. כשיש כמה יומנים
+    בעלי שם זהה (כמו כמה יומני 'Family') ושם בלבד לא מבדיל ביניהם, list_calendars לא
+    מספיק — כאן יוצרים בכל יומן אירוע בדיקה קטן (מחר, כותרת קבועה) ובודקים אם הניסיון
+    הצליח. cleanup=False (ברירת מחדל): האירועים שנוצרו *לא* נמחקים אוטומטית בכוונה —
+    כך ניתן לראות אותם ביישומון Calendar של אפל ולזהות ויזואלית איזה יומן הוא בפועל
+    היומן המשותף עם המשפחה (ולא רק "יומן כתיב כלשהו"). cleanup=True: לא יוצר חדשים,
+    אלא מוחק את כל אירועי הבדיקה הקיימים (לפי הכותרת הקבועה) מכל היומנים — לניקוי בסוף.
+    ר' routers/calendar.py GET /calendar/calendars/test."""
+    calendars = _get_calendars()
+    test_start = datetime.now(timezone.utc) + timedelta(days=1)
+    test_end = test_start + timedelta(hours=1)
+    search_start = test_start - timedelta(days=2)
+    search_end = test_start + timedelta(days=2)
+
+    results = []
+    for i, cal in enumerate(calendars):
+        try:
+            name = cal.name
+        except Exception:
+            name = None
+        entry = {"index": i, "name": name}
+
+        try:
+            if cleanup:
+                deleted = 0
+                for ev in cal.search(start=search_start, end=search_end, event=True):
+                    try:
+                        ical = ev.get_icalendar_instance()
+                    except Exception:
+                        continue
+                    for comp in ical.walk("VEVENT"):
+                        if str(comp.get("summary", "")) == _TEST_EVENT_TITLE:
+                            ev.delete()
+                            deleted += 1
+                            break
+                entry["deleted"] = deleted
+            else:
+                cal.add_event(summary=_TEST_EVENT_TITLE, dtstart=test_start, dtend=test_end)
+                entry["can_write"] = True
+        except Exception as e:
+            entry["can_write"] = False
+            entry["error"] = str(e)
+
+        results.append(entry)
+
+    return results
 
 
 def create_event(

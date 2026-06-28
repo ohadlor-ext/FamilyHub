@@ -3,7 +3,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from routers.auth import get_current_user_dep
 from models.user import User
-from services.icloud_calendar import get_upcoming_events, get_today_events, get_events_in_range, list_calendars
+from services.icloud_calendar import (
+    get_upcoming_events,
+    get_today_events,
+    get_events_in_range,
+    list_calendars,
+    test_write_access,
+)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
@@ -14,9 +20,21 @@ def calendars_list():
     בלי אימות, כדי שאפשר לפתוח את הכתובת ישירות בדפדפן. is_write_target=true מסמן את היומן
     שאליו create_event כותב כרגע. שימושי אם הוספת אירוע נכשלת עם 403/AuthorizationError —
     כלומר היומן שנבחר אוטומטית אינו כתיב — כדי לזהות את השם המדויק של היומן הנכון
-    ולהגדיר אותו ב-ICLOUD_CALENDAR_NAME ב-Railway."""
+    ולהגדיר אותו ב-ICLOUD_CALENDAR_NAME (או ICLOUD_CALENDAR_INDEX אם יש כמה יומנים בשם זהה) ב-Railway."""
     try:
         return {"calendars": list_calendars()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/calendars/test")
+def calendars_test_write(cleanup: bool = Query(False)):
+    """בודק בפועל איזה יומנים בחשבון אפשר לכתוב אליהם — יוצר אירוע בדיקה זמני בכל יומן
+    (ר' icloud_calendar.test_write_access להסבר מלא). שימושי כשיש כמה יומנים בעלי שם
+    זהה (כמו כמה 'Family') ולא ניתן להבדיל ביניהם לפי שם בלבד דרך GET /calendar/calendars.
+    cleanup=true: לא יוצר חדשים, מוחק את כל אירועי הבדיקה הקיימים. בלי אימות בכוונה."""
+    try:
+        return {"results": test_write_access(cleanup=cleanup)}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
