@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
-from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments, maintenance, rewards, ai_corner
+from routers import auth, calendar, tasks, inventory, weather, ai, family, recipes, meal_plans, routines, payments, maintenance, rewards, ai_corner, telegram
 from database import engine, Base, SessionLocal
 from models import user, task, inventory as inv_model, recipe as recipe_model, routine as routine_model, payment as payment_model, maintenance as maintenance_model, rewards as rewards_model, ai_corner as ai_corner_model
 from services.notifications import send_morning_summary, send_recipe_notification, send_payment_reminders, send_maintenance_reminders
@@ -151,6 +151,7 @@ app.include_router(payments.router)
 app.include_router(maintenance.router)
 app.include_router(rewards.router)
 app.include_router(ai_corner.router)
+app.include_router(telegram.router)
 
 
 @app.get("/")

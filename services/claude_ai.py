@@ -389,6 +389,50 @@ def get_ai_corner_content(
     return _parse_json_response(response.content[0].text, default=_AI_CORNER_DEFAULT)
 
 
+# ---------- טלגרם → משימה: זיהוי וחילוץ משימה מהודעת טקסט חופשית ----------
+
+_TELEGRAM_WEEKDAY_HE = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+
+TELEGRAM_TASK_PROMPT_TEMPLATE = """אתה מסנן הודעות טלגרם מתוך קבוצת משפחה, ומחליט אילו מהן הן בעצם משימה/תזכורת שצריך לשמור באפליקציית ניהול הבית של המשפחה.
+
+התאריך והשעה כרגע: {now_str}, יום {weekday_he}
+בני המשפחה הרשומים במערכת: {family_names}
+ההודעה נשלחה ע"י: {sender_name}
+תוכן ההודעה: "{text}"
+
+## המשימה שלך:
+1. קבע אם ההודעה היא בעצם משימה/תזכורת/דבר שצריך לעשות (is_task) — לעומת שיחת חולין, שאלה כללית, תגובה להודעת בוט קודמת, או כל דבר אחר שלא אמור להיכנס כמשימה.
+2. אם כן — חלץ כותרת קצרה וברורה למשימה (אפשר לנסח טוב יותר מהמקור, אבל לשמור על המשמעות המדויקת).
+3. אם יש בהודעה תאריך/שעה (גם יחסיים, כמו "מחר", "ביום שלישי", "בעוד שעה") — חשב תאריך ושעה מוחלטים לפי התאריך/שעה הנוכחיים שניתנו לך, בפורמט "YYYY-MM-DDTHH:MM:SS". אם מוזכר יום בלי שעה ספציפית, קבע שעה 09:00. אם אין שום אזכור זמן בהודעה, השאר null — אל תמציא תאריך.
+4. אם מוזכר בהודעה שם של אחד מבני המשפחה הרשומים (או כינוי קרוב וברור אליו) — שייך אליו (assigned_name = השם המדויק כפי שמופיע ברשימה). אם לא מוזכר שום שם, או שאתה לא בטוח למי הכוונה, השאר null — אל תנחש.
+5. דרג רמת ביטחון (confidence): "high" רק אם חד-משמעי וברור שזו משימה לביצוע; "medium" אם כנראה משימה אבל הניסוח מעורפל/חלקי; "low" אם מאוד לא בטוח שזו בכלל משימה.
+
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
+{{"is_task": <true/false>, "confidence": "<high/medium/low>", "title": "<כותרת קצרה או null>", "due_date": "<YYYY-MM-DDTHH:MM:SS או null>", "assigned_name": "<שם מדויק מהרשימה או null>"}}"""
+
+_TELEGRAM_TASK_DEFAULT = {
+    "is_task": False, "confidence": "low", "title": None, "due_date": None, "assigned_name": None,
+}
+
+
+def parse_telegram_task(text: str, family_member_names: list, sender_name: str, now) -> dict:
+    """text: תוכן הודעת הטלגרם. family_member_names: שמות המשתמשים הפעילים במערכת,
+    לצורך שיוך אופציונלי. now: datetime נוכחי (aware, Asia/Jerusalem) לחישוב תאריכים יחסיים."""
+    prompt = TELEGRAM_TASK_PROMPT_TEMPLATE.format(
+        now_str=now.strftime("%Y-%m-%d %H:%M"),
+        weekday_he=_TELEGRAM_WEEKDAY_HE[now.weekday()],
+        family_names=", ".join(family_member_names) if family_member_names else "לא ידוע",
+        sender_name=sender_name,
+        text=text,
+    )
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(response.content[0].text, default=_TELEGRAM_TASK_DEFAULT)
+
+
 def _parse_json_response(text: str, default):
     text = text.strip()
     # Claude עלול לעטוף ב-```json ... ``` למרות ההנחיה שלא לעשות זאת — מסירים אם קיים
