@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import caldav
+from caldav.elements import ical
 
 logger = logging.getLogger(__name__)
 
@@ -157,13 +158,27 @@ def _get_target_calendar():
     return calendars[_resolve_target_index(calendars)]
 
 
+def _get_calendar_color(cal) -> Optional[str]:
+    """מחזיר את הצבע (hex) שמוגדר ליומן הזה בחשבון ה-iCloud עצמו (apple:calendar-color) —
+    לא להתבלבל עם _CALENDAR_COLORS שזה רק צבעי תצוגה שאנחנו מייצרים. שימושי בדיוק בשביל
+    להבדיל בין כמה יומנים בעלי שם זהה: הצבע הזה הוא מה שמוצג בפועל ברשימת היומנים
+    באפליקציית Calendar של אפל (האפטל/אייפון), כך שאפשר להשוות ולזהות איזה index הוא איזה."""
+    try:
+        color = cal.get_property(ical.CalendarColor())
+        return str(color) if color else None
+    except Exception:
+        return None
+
+
 def list_calendars() -> List[dict]:
-    """שמות כל היומנים בחשבון ה-iCloud (עם index, כי iCloud יכול להחזיר כמה יומנים בעלי שם
-    זהה — למשל כמה יומנים שכולם נקראים 'Family' — ושם בלבד לא תמיד מספיק כדי להבדיל
-    ביניהם), וסימון איזה מהם נבחר כיעד לכתיבה כרגע (כמו ב-_get_target_calendar). אנדפוינט
-    אבחון (ר' routers/calendar.py GET /calendar/calendars) — שימושי כש-create_event נכשל
-    עם 403/AuthorizationError, כדי לזהות איזה יומן הוא לא-כתיב. ר' גם test_write_access
-    לבדיקה בפועל (לא רק לפי שם/הרשאות מוצהרות) כשיש כמה יומנים בעלי שם זהה."""
+    """שמות כל היומנים בחשבון ה-iCloud (עם index וצבע, כי iCloud יכול להחזיר כמה יומנים
+    בעלי שם זהה — למשל כמה יומנים שכולם נקראים 'Family' — ושם בלבד לא תמיד מספיק כדי
+    להבדיל ביניהם; הצבע (color) הוא בדיוק הצבע שמוצג ביישומון Calendar של אפל, כך שאפשר
+    להשוות ולזהות איזה index הוא איזה), וסימון איזה מהם נבחר כיעד לכתיבה כרגע (כמו
+    ב-_get_target_calendar). אנדפוינט אבחון (ר' routers/calendar.py GET /calendar/calendars)
+    — שימושי כש-create_event נכשל עם 403/AuthorizationError, כדי לזהות איזה יומן הוא
+    לא-כתיב. ר' גם test_write_access לבדיקה בפועל (לא רק לפי שם/הרשאות מוצהרות) כשיש כמה
+    יומנים בעלי שם זהה."""
     calendars = _get_calendars()
     target_index = _resolve_target_index(calendars) if calendars else -1
 
@@ -173,7 +188,12 @@ def list_calendars() -> List[dict]:
             name = cal.name
         except Exception:
             name = None
-        result.append({"index": i, "name": name, "is_write_target": i == target_index})
+        result.append({
+            "index": i,
+            "name": name,
+            "color": _get_calendar_color(cal),
+            "is_write_target": i == target_index,
+        })
     return result
 
 
@@ -201,17 +221,17 @@ def test_write_access(cleanup: bool = False) -> List[dict]:
             name = cal.name
         except Exception:
             name = None
-        entry = {"index": i, "name": name}
+        entry = {"index": i, "name": name, "color": _get_calendar_color(cal)}
 
         try:
             if cleanup:
                 deleted = 0
                 for ev in cal.search(start=search_start, end=search_end, event=True):
                     try:
-                        ical = ev.get_icalendar_instance()
+                        vcal = ev.get_icalendar_instance()
                     except Exception:
                         continue
-                    for comp in ical.walk("VEVENT"):
+                    for comp in vcal.walk("VEVENT"):
                         if str(comp.get("summary", "")) == _TEST_EVENT_TITLE:
                             ev.delete()
                             deleted += 1
