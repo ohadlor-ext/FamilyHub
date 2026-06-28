@@ -1,20 +1,24 @@
 """
-Telegram → משימה: כיוון הפוך מ-services/telegram_bot.py (שזה רק יוצא/דחיפה).
-כאן נכנסות הודעות שבני המשפחה שולחים *לתוך* הקבוצה, ו-AI (Claude) מחליט אם
-הן בעצם משימה שצריך לשמור באפליקציה, מחלץ כותרת/תאריך/שיוך, ויוצר Task בהתאם.
+Telegram → רשומה: כיוון הפוך מ-services/telegram_bot.py (שזה רק יוצא/דחיפה).
+כאן נכנסות הודעות שבני המשפחה שולחים *לתוך* הקבוצה, ו-AI (Claude) מסווג כל הודעה
+לאחת מחמש קטגוריות — event (אירוע ליומן), payment (תשלום), maintenance (תחזוקת בית),
+task (משימה), או none (לא רלוונטי) — ויוצר את הרשומה המתאימה בהתאם.
 
 זרימה:
 1. Telegram שולח כל הודעה חדשה בקבוצה ל-POST /telegram/webhook (לאחר שמגדירים
    setWebhook חד-פעמי מול ה-API של טלגרם — ראו הוראות בהודעת הקומיט).
 2. מאמתים שההודעה הגיעה מה-chat_id המוכר (TELEGRAM_FAMILY_CHAT_ID) ומה-secret
    token הנכון (TELEGRAM_WEBHOOK_SECRET, אם הוגדר) — כדי שלא כל גורם מהאינטרנט
-   שמוצא את כתובת ה-webhook יוכל ליצור משימות.
-3. אם יש הצעת משימה שמחכה לאישור מהודעה קודמת באותו chat — בודקים אם ההודעה
-   הנוכחית היא תשובת כן/לא לה. אם לא, ההצעה הקודמת מתיישנת ומטופלת כהודעה רגילה.
-4. קוראים ל-Claude (services/claude_ai.parse_telegram_task) לסנן/לחלץ. אם לא
-   משימה — לא מגיבים בכלל (כדי לא להציף את קבוצת המשפחה). אם משימה בביטחון
-   גבוה — נוצרת אוטומטית. אם ביטחון בינוני/נמוך — שולחים שאלת אישור ושומרים
-   את ההצעה בזיכרון עד לתשובה.
+   שמוצא את כתובת ה-webhook יוכל ליצור רשומות.
+3. אם יש הצעה שמחכה לאישור מהודעה קודמת באותו chat — בודקים אם ההודעה הנוכחית
+   היא תשובת כן/לא לה. אם לא, ההצעה הקודמת מתיישנת ומטופלת כהודעה רגילה.
+4. קוראים ל-Claude (services/claude_ai.parse_telegram_message) לסנן/לסווג/לחלץ.
+   אם category="none" — לא מגיבים בכלל (כדי לא להציף את קבוצת המשפחה). אם
+   בביטחון גבוה — נוצרת הרשומה אוטומטית. אם ביטחון בינוני/נמוך — שולחים שאלת
+   אישור (ניסוח לפי קטגוריה) ושומרים את ההצעה בזיכרון עד לתשובה.
+5. לפי category נוצרת הרשומה במקום המתאים: task → models.task.Task,
+   event → יומן ה-iCloud (services/icloud_calendar.create_event),
+   payment → models.payment.RecurringPayment, maintenance → models.maintenance.MaintenanceItem.
 
 הערה: מצב ה"הצעה שמחכה לאישור" נשמר בזיכרון התהליך (לא ב-DB) — פיצ'ר קליל
 בכוונה, כמו שאר ההתראות בקובץ הזה. אם השרת נדחק/קם מחדש בדיוק בין הודעת
@@ -30,8 +34,11 @@ from fastapi import APIRouter, Request, Header
 from database import SessionLocal
 from models.user import User, UserRole
 from models.task import Task, TaskPriority
+from models.payment import RecurringPayment
+from models.maintenance import MaintenanceItem
 from services.telegram_bot import send_message_sync
-from services.claude_ai import parse_telegram_task
+from services.claude_ai import parse_telegram_message
+from services.icloud_calendar import create_event as create_calendar_event
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 logger = logging.getLogger(__name__)
@@ -42,7 +49,13 @@ WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 _CONFIRM_WORDS = {"כן", "אישור", "מאשר", "מאשרת", "yes", "y", "ok", "אוקיי", "👍", "✅"}
 _CANCEL_WORDS = {"לא", "ביטול", "בטל", "no", "n", "cancel", "👎"}
 
-# הצעת משימה שמחכה לאישור, לפי chat_id: {"title": str, "due_date": str|None, "assigned_name": str|None}
+_VALID_RECURRENCE = {"once", "weekly", "monthly", "yearly"}
+_VALID_MAINTENANCE_CATEGORIES = {"מכשיר", "רכב", "ביטוח", "מסמך", "אחר"}
+ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
+
+# הצעה שמחכה לאישור, לפי chat_id — ראו services/claude_ai.parse_telegram_message
+# למבנה המלא (category/title/date/end_date/all_day/location/assigned_name/amount/
+# recurrence/maintenance_category).
 _pending: dict[str, dict] = {}
 
 
@@ -62,7 +75,7 @@ async def telegram_webhook(
 
     message = body.get("message") or body.get("edited_message")
     if not message or not message.get("text"):
-        return {"ok": True}  # סטיקרים/תמונות/וכו' — לא רלוונטי לפיצ'ר הזה
+        return {"ok": True}  # סטיקרים/תמונות/הודעות קול/וכו' — לא רלוונטי לפיצ'ר הזה
 
     chat_id = str(message["chat"]["id"])
     text = message["text"].strip()
@@ -73,17 +86,17 @@ async def telegram_webhook(
         logger.warning(f"Telegram webhook: הודעה מ-chat_id לא מוכר ({chat_id}) — נדחתה")
         return {"ok": True}
 
-    # תשובה להצעת משימה קודמת שמחכה באותו צ'אט?
+    # תשובה להצעה קודמת שמחכה באותו צ'אט?
     pending = _pending.get(chat_id)
     if pending:
         normalized = text.strip().lower()
         if text in _CONFIRM_WORDS or normalized in _CONFIRM_WORDS:
             del _pending[chat_id]
-            _create_task_from_suggestion(pending, chat_id)
+            _create_record_from_suggestion(pending, chat_id)
             return {"ok": True}
         if text in _CANCEL_WORDS or normalized in _CANCEL_WORDS:
             del _pending[chat_id]
-            send_message_sync("בסדר, לא נוספה משימה.", chat_id=chat_id)
+            send_message_sync("בסדר, לא נוסף.", chat_id=chat_id)
             return {"ok": True}
         # לא תגובת כן/לא — ההצעה הקודמת התיישנה, ממשיכים לטפל בהודעה הזו מהתחלה
         del _pending[chat_id]
@@ -94,34 +107,96 @@ async def telegram_webhook(
     finally:
         db.close()
 
-    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    now = datetime.now(ISRAEL_TZ)
     try:
-        result = parse_telegram_task(text, family_member_names=family_names, sender_name=sender_name, now=now)
+        result = parse_telegram_message(text, family_member_names=family_names, sender_name=sender_name, now=now)
     except Exception as e:
-        logger.error(f"Telegram webhook: parse_telegram_task נכשל: {e}")
+        logger.error(f"Telegram webhook: parse_telegram_message נכשל: {e}")
         return {"ok": True}
 
-    if not result.get("is_task"):
-        return {"ok": True}  # לא משימה — בכוונה לא מגיבים, כדי לא להציף את הקבוצה
+    category = result.get("category") or "none"
+    if category == "none":
+        return {"ok": True}  # לא רלוונטי — בכוונה לא מגיבים, כדי לא להציף את הקבוצה
 
     suggestion = {
+        "category": category,
         "title": (result.get("title") or text).strip(),
-        "due_date": result.get("due_date"),
+        "date": result.get("date"),
+        "end_date": result.get("end_date"),
+        "all_day": bool(result.get("all_day")),
+        "location": result.get("location"),
         "assigned_name": result.get("assigned_name"),
+        "amount": result.get("amount"),
+        "recurrence": result.get("recurrence") or "once",
+        "maintenance_category": result.get("maintenance_category") or "אחר",
     }
 
+    # רשת ביטחון: event/payment/maintenance בלי תאריך קונקרטי אינם תקפים — מבוטח
+    # גם כשה-AI לא הקפיד על ההנחיה לסווג כ-task במקרה הזה (ראו prompt בclaude_ai.py).
+    if suggestion["category"] in ("event", "payment", "maintenance") and not suggestion["date"]:
+        suggestion["category"] = category = "task"
+
     if result.get("confidence") == "high":
-        _create_task_from_suggestion(suggestion, chat_id)
+        _create_record_from_suggestion(suggestion, chat_id)
     else:
         _pending[chat_id] = suggestion
-        when = f" עד {suggestion['due_date']}" if suggestion["due_date"] else ""
-        who = f" (ל{suggestion['assigned_name']})" if suggestion["assigned_name"] else ""
-        send_message_sync(
-            f"🤔 ליצור משימה: *{suggestion['title']}*{when}{who}?\nענו \"כן\" לאישור או \"לא\" לביטול.",
-            chat_id=chat_id,
-        )
+        send_message_sync(_confirmation_text(suggestion), chat_id=chat_id)
 
     return {"ok": True}
+
+
+def _parse_dt(iso_str):
+    """ממיר מחרוזת ISO (כמו שה-AI מחזיר) ל-datetime מודע-אזור-זמן (Asia/Jerusalem).
+    מחזיר None אם המחרוזת חסרה/לא תקינה."""
+    if not iso_str:
+        return None
+    try:
+        return datetime.fromisoformat(iso_str).replace(tzinfo=ISRAEL_TZ)
+    except ValueError:
+        return None
+
+
+def _format_when(iso_str, all_day=False) -> str:
+    dt = _parse_dt(iso_str)
+    if not dt:
+        return ""
+    return f" ב-{dt.strftime('%d/%m')}" if all_day else f" ב-{dt.strftime('%d/%m %H:%M')}"
+
+
+def _confirmation_text(suggestion: dict) -> str:
+    category = suggestion["category"]
+    title = suggestion["title"]
+
+    if category == "event":
+        when = _format_when(suggestion["date"], suggestion.get("all_day"))
+        where = f" ב{suggestion['location']}" if suggestion.get("location") else ""
+        return f"🤔 להוסיף ליומן: *{title}*{when}{where}?\nענו \"כן\" לאישור או \"לא\" לביטול."
+
+    if category == "payment":
+        when = _format_when(suggestion["date"])
+        amount = f" ({suggestion['amount']:.0f} ש\"ח)" if suggestion.get("amount") else ""
+        return f"🤔 להוסיף תזכורת תשלום: *{title}*{amount}{when}?\nענו \"כן\" לאישור או \"לא\" לביטול."
+
+    if category == "maintenance":
+        when = _format_when(suggestion["date"])
+        return f"🤔 להוסיף פריט תחזוקת בית: *{title}*{when}?\nענו \"כן\" לאישור או \"לא\" לביטול."
+
+    # task (ברירת מחדל)
+    when = _format_when(suggestion["date"]) if suggestion.get("date") else ""
+    who = f" (ל{suggestion['assigned_name']})" if suggestion.get("assigned_name") else ""
+    return f"🤔 ליצור משימה: *{title}*{when}{who}?\nענו \"כן\" לאישור או \"לא\" לביטול."
+
+
+def _create_record_from_suggestion(suggestion: dict, chat_id: str):
+    category = suggestion.get("category", "task")
+    if category == "event":
+        _create_event_from_suggestion(suggestion, chat_id)
+    elif category == "payment":
+        _create_payment_from_suggestion(suggestion, chat_id)
+    elif category == "maintenance":
+        _create_maintenance_from_suggestion(suggestion, chat_id)
+    else:
+        _create_task_from_suggestion(suggestion, chat_id)
 
 
 def _create_task_from_suggestion(suggestion: dict, chat_id: str):
@@ -139,12 +214,7 @@ def _create_task_from_suggestion(suggestion: dict, chat_id: str):
             if match:
                 assigned_to = match.id
 
-        due_date = None
-        if suggestion.get("due_date"):
-            try:
-                due_date = datetime.fromisoformat(suggestion["due_date"]).replace(tzinfo=ZoneInfo("Asia/Jerusalem"))
-            except ValueError:
-                due_date = None
+        due_date = _parse_dt(suggestion.get("date"))
 
         task = Task(
             title=suggestion["title"],
@@ -167,5 +237,92 @@ def _create_task_from_suggestion(suggestion: dict, chat_id: str):
     except Exception as e:
         logger.error(f"Telegram task creation נכשל: {e}")
         send_message_sync("⚠️ הייתה שגיאה ביצירת המשימה.", chat_id=chat_id)
+    finally:
+        db.close()
+
+
+def _create_event_from_suggestion(suggestion: dict, chat_id: str):
+    start_dt = _parse_dt(suggestion.get("date"))
+    if not start_dt:
+        send_message_sync("⚠️ לא הצלחתי להוסיף אירוע ליומן — לא זוהה תאריך.", chat_id=chat_id)
+        return
+
+    end_dt = _parse_dt(suggestion.get("end_date"))
+    try:
+        create_calendar_event(
+            title=suggestion["title"],
+            start=start_dt,
+            end=end_dt,
+            all_day=bool(suggestion.get("all_day")),
+            location=suggestion.get("location"),
+        )
+        when = _format_when(suggestion["date"], suggestion.get("all_day"))
+        where = f" ב{suggestion['location']}" if suggestion.get("location") else ""
+        send_message_sync(f"📅 נוסף ליומן: *{suggestion['title']}*{when}{where}", chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Telegram event creation נכשל: {e}")
+        send_message_sync("⚠️ הייתה שגיאה בהוספת האירוע ליומן.", chat_id=chat_id)
+
+
+def _create_payment_from_suggestion(suggestion: dict, chat_id: str):
+    due = _parse_dt(suggestion.get("date"))
+    if not due:
+        send_message_sync("⚠️ לא הצלחתי ליצור תזכורת תשלום — לא זוהה תאריך.", chat_id=chat_id)
+        return
+
+    recurrence = suggestion.get("recurrence") or "once"
+    if recurrence not in _VALID_RECURRENCE:
+        recurrence = "once"
+
+    db = SessionLocal()
+    try:
+        payment = RecurringPayment(
+            title=suggestion["title"],
+            amount=suggestion.get("amount"),
+            recurrence=recurrence,
+            next_due_date=due.date(),
+        )
+        db.add(payment)
+        db.commit()
+
+        amount_str = f" ({suggestion['amount']:.0f} ש\"ח)" if suggestion.get("amount") else ""
+        send_message_sync(
+            f"💰 נוספה תזכורת תשלום: *{suggestion['title']}*{amount_str} עד {due.strftime('%d/%m')}",
+            chat_id=chat_id,
+        )
+    except Exception as e:
+        logger.error(f"Telegram payment creation נכשל: {e}")
+        send_message_sync("⚠️ הייתה שגיאה ביצירת תזכורת התשלום.", chat_id=chat_id)
+    finally:
+        db.close()
+
+
+def _create_maintenance_from_suggestion(suggestion: dict, chat_id: str):
+    due = _parse_dt(suggestion.get("date"))
+    if not due:
+        send_message_sync("⚠️ לא הצלחתי ליצור פריט תחזוקה — לא זוהה תאריך.", chat_id=chat_id)
+        return
+
+    category = suggestion.get("maintenance_category") or "אחר"
+    if category not in _VALID_MAINTENANCE_CATEGORIES:
+        category = "אחר"
+
+    db = SessionLocal()
+    try:
+        item = MaintenanceItem(
+            name=suggestion["title"],
+            category=category,
+            next_due_date=due.date(),
+        )
+        db.add(item)
+        db.commit()
+
+        send_message_sync(
+            f"🔧 נוסף פריט תחזוקת בית: *{suggestion['title']}* עד {due.strftime('%d/%m')}",
+            chat_id=chat_id,
+        )
+    except Exception as e:
+        logger.error(f"Telegram maintenance creation נכשל: {e}")
+        send_message_sync("⚠️ הייתה שגיאה ביצירת פריט התחזוקה.", chat_id=chat_id)
     finally:
         db.close()

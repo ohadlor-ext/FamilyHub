@@ -389,36 +389,57 @@ def get_ai_corner_content(
     return _parse_json_response(response.content[0].text, default=_AI_CORNER_DEFAULT)
 
 
-# ---------- טלגרם → משימה: זיהוי וחילוץ משימה מהודעת טקסט חופשית ----------
+# ---------- טלגרם → רשומה: זיהוי וחילוץ מהודעת טקסט חופשית ----------
+# מסווג כל הודעה לאחת מחמש קטגוריות (event/payment/maintenance/task/none) ומחלץ
+# את השדות הרלוונטיים לאותה קטגוריה. routers/telegram.py מחליט לפי category לאיזו
+# טבלה/שירות ליצור את הרשומה (Task / RecurringPayment / MaintenanceItem / יומן iCloud).
 
 _TELEGRAM_WEEKDAY_HE = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
 
-TELEGRAM_TASK_PROMPT_TEMPLATE = """אתה מסנן הודעות טלגרם מתוך קבוצת משפחה, ומחליט אילו מהן הן בעצם משימה/תזכורת שצריך לשמור באפליקציית ניהול הבית של המשפחה.
+TELEGRAM_MESSAGE_PROMPT_TEMPLATE = """אתה מסנן הודעות טלגרם מתוך קבוצת משפחה, ומחליט אם הן מכילות מידע שצריך לשמור באפליקציית ניהול הבית של המשפחה — ואם כן, לאיזה חלק באפליקציה הן שייכות.
 
 התאריך והשעה כרגע: {now_str}, יום {weekday_he}
 בני המשפחה הרשומים במערכת: {family_names}
 ההודעה נשלחה ע"י: {sender_name}
 תוכן ההודעה: "{text}"
 
+## חמש קטגוריות אפשריות (category):
+- "event" — אירוע/פגישה/מסיבה/חוג/תור עם תאריך — מקומו הנכון הוא ביומן, לא ברשימת משימות (למשל: מסיבת יום הולדת/בר-מצווה, תור לרופא, פגישה, אירוע משפחתי).
+- "payment" — תשלום שצריך לשלם כדי שלא ייווצר חוב/אי-נעימות (ארנונה, ביטוח, מנוי, קנס, חוב), עם מועד תשלום.
+- "maintenance" — טיפול תקופתי במכשיר/רכב, או תוקף מסמך/ביטוח/אחריות שצריך לחדש/לטפל בו, עם תאריך יעד.
+- "task" — כל דבר אחר שהוא משימה/תזכורת ברורה לביצוע. גם event/payment/maintenance הופכים ל-"task" אם לא הצלחת לחלץ מהם תאריך קונקרטי (בלי תאריך, event/payment/maintenance לא תקפים).
+- "none" — שיחת חולין, שאלה כללית, תגובה להודעת בוט קודמת, או כל דבר אחר שלא אמור להישמר בכלל.
+
 ## המשימה שלך:
-1. קבע אם ההודעה היא בעצם משימה/תזכורת/דבר שצריך לעשות (is_task) — לעומת שיחת חולין, שאלה כללית, תגובה להודעת בוט קודמת, או כל דבר אחר שלא אמור להיכנס כמשימה.
-2. אם כן — חלץ כותרת קצרה וברורה למשימה (אפשר לנסח טוב יותר מהמקור, אבל לשמור על המשמעות המדויקת).
-3. אם יש בהודעה תאריך/שעה (גם יחסיים, כמו "מחר", "ביום שלישי", "בעוד שעה") — חשב תאריך ושעה מוחלטים לפי התאריך/שעה הנוכחיים שניתנו לך, בפורמט "YYYY-MM-DDTHH:MM:SS". אם מוזכר יום בלי שעה ספציפית, קבע שעה 09:00. אם אין שום אזכור זמן בהודעה, השאר null — אל תמציא תאריך.
-4. אם מוזכר בהודעה שם של אחד מבני המשפחה הרשומים (או כינוי קרוב וברור אליו) — שייך אליו (assigned_name = השם המדויק כפי שמופיע ברשימה). אם לא מוזכר שום שם, או שאתה לא בטוח למי הכוונה, השאר null — אל תנחש.
-5. דרג רמת ביטחון (confidence): "high" רק אם חד-משמעי וברור שזו משימה לביצוע; "medium" אם כנראה משימה אבל הניסוח מעורפל/חלקי; "low" אם מאוד לא בטוח שזו בכלל משימה.
+1. קבע category לפי ההגדרות מעלה.
+2. אם category הוא event/payment/maintenance — חובה תאריך קונקרטי (date), אחרת הורד category ל-"task" (או "none" אם גם זה לא מתאים).
+3. חלץ כותרת קצרה וברורה (title) — אפשר לנסח טוב יותר מהמקור, אבל לשמור על המשמעות המדויקת.
+4. אם יש בהודעה תאריך/שעה (גם יחסיים, כמו "מחר", "ביום שלישי", "בעוד שבועיים") — חשב תאריך מוחלט לפי התאריך הנוכחי, בפורמט "YYYY-MM-DDTHH:MM:SS", ושים בשדה date.
+   - אם מוזכרת שעה ספציפית — קבע אותה, ול-event: all_day=false.
+   - אם מוזכר רק יום בלי שעה: ל-task/payment/maintenance קבע שעה 09:00. ל-event קבע all_day=true (אירוע יום שלם, כמו מסיבה או חג) ושעה 00:00 ב-date.
+   - אם אין שום אזכור זמן בהודעה — date=null (וה-category לא יכול להיות event/payment/maintenance, ראו כלל 2). אל תמציא תאריך.
+5. event בלבד: אם יש שעת/תאריך סיום משוערים — end_date באותו פורמט, אחרת null. אם מוזכר מיקום — location, אחרת null.
+6. task בלבד: אם מוזכר שם של אחד מבני המשפחה הרשומים (או כינוי קרוב וברור) — assigned_name (השם המדויק מהרשימה), אחרת null. אל תנחש.
+7. payment בלבד: amount — סכום מספרי אם מוזכר (ש"ח), אחרת null. recurrence — "weekly"/"monthly"/"yearly" רק אם מוזכרת חזרתיות מפורשת (כל שבוע/חודש/שנה, חודשי, שנתי), אחרת "once".
+8. maintenance בלבד: maintenance_category — אחד מ: "מכשיר", "רכב", "ביטוח", "מסמך", "אחר" (ברירת מחדל "אחר" אם לא ברור מההקשר).
+9. דרג רמת ביטחון (confidence): "high" רק אם חד-משמעי וברור שזה דבר ששייך לאחת הקטגוריות ושצריך לשמור; "medium" אם כנראה כן אבל הניסוח מעורפל/חלקי; "low" אם מאוד לא בטוח.
 
-החזר JSON בלבד (בלי טקסט נוסף, בלי markdown):
-{{"is_task": <true/false>, "confidence": "<high/medium/low>", "title": "<כותרת קצרה או null>", "due_date": "<YYYY-MM-DDTHH:MM:SS או null>", "assigned_name": "<שם מדויק מהרשימה או null>"}}"""
+החזר JSON בלבד (בלי טקסט נוסף, בלי markdown), עם כל השדות הבאים תמיד (null במה שלא רלוונטי לקטגוריה):
+{{"category": "<event/payment/maintenance/task/none>", "confidence": "<high/medium/low>", "title": "<כותרת או null>", "date": "<YYYY-MM-DDTHH:MM:SS או null>", "end_date": "<YYYY-MM-DDTHH:MM:SS או null>", "all_day": <true/false>, "location": "<מיקום או null>", "assigned_name": "<שם מדויק מהרשימה או null>", "amount": <מספר או null>, "recurrence": "<once/weekly/monthly/yearly או null>", "maintenance_category": "<מכשיר/רכב/ביטוח/מסמך/אחר או null>"}}"""
 
-_TELEGRAM_TASK_DEFAULT = {
-    "is_task": False, "confidence": "low", "title": None, "due_date": None, "assigned_name": None,
+_TELEGRAM_MESSAGE_DEFAULT = {
+    "category": "none", "confidence": "low", "title": None, "date": None, "end_date": None,
+    "all_day": False, "location": None, "assigned_name": None, "amount": None,
+    "recurrence": None, "maintenance_category": None,
 }
 
 
-def parse_telegram_task(text: str, family_member_names: list, sender_name: str, now) -> dict:
+def parse_telegram_message(text: str, family_member_names: list, sender_name: str, now) -> dict:
     """text: תוכן הודעת הטלגרם. family_member_names: שמות המשתמשים הפעילים במערכת,
-    לצורך שיוך אופציונלי. now: datetime נוכחי (aware, Asia/Jerusalem) לחישוב תאריכים יחסיים."""
-    prompt = TELEGRAM_TASK_PROMPT_TEMPLATE.format(
+    לצורך שיוך אופציונלי במשימות. now: datetime נוכחי (aware, Asia/Jerusalem) לחישוב
+    תאריכים יחסיים. מחזיר category אחד מ-event/payment/maintenance/task/none —
+    ראו routers/telegram.py לאיך כל category הופך לרשומה בפועל."""
+    prompt = TELEGRAM_MESSAGE_PROMPT_TEMPLATE.format(
         now_str=now.strftime("%Y-%m-%d %H:%M"),
         weekday_he=_TELEGRAM_WEEKDAY_HE[now.weekday()],
         family_names=", ".join(family_member_names) if family_member_names else "לא ידוע",
@@ -427,10 +448,10 @@ def parse_telegram_task(text: str, family_member_names: list, sender_name: str, 
     )
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=300,
+        max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
-    return _parse_json_response(response.content[0].text, default=_TELEGRAM_TASK_DEFAULT)
+    return _parse_json_response(response.content[0].text, default=_TELEGRAM_MESSAGE_DEFAULT)
 
 
 def _parse_json_response(text: str, default):
