@@ -70,6 +70,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Recurrence column migration warning: {e}")
 
+    # הרשאות תצוגה לילד — מה הילד רואה כשמתחבר עם ה-Gmail שלו
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS visible_sections JSON"
+            ))
+            conn.commit()
+        print("✅ עמודת child_profiles.visible_sections אומתה")
+    except Exception as e:
+        print(f"⚠️ visible_sections column migration warning: {e}")
+
     # עמודה חדשה ב-tasks (טבלה קיימת) — מערכת תגמולי הנקודות (models/rewards.py)
     # צריכה לסמן על המשימה שכבר זיכינו עליה נקודות, כדי לא לזכות פעמיים.
     try:

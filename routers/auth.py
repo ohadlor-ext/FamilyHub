@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from database import get_db
-from models.user import User, UserRole
+from models.user import User, UserRole, ChildProfile
 from services.google_auth import (
     get_google_auth_url,
     exchange_code_for_tokens,
@@ -95,6 +95,40 @@ def get_current_user(
         "picture": user.picture,
         "role": user.role,
     }
+
+
+_DEFAULT_VISIBLE: dict = {
+    "calendar": True, "tasks": True, "routines": True,
+    "points": True, "homework": True, "meals": True,
+    "ai_corner": True, "payments": False, "maintenance": False,
+}
+_PARENT_ONLY_SECTIONS = {"payments", "maintenance"}
+
+
+@router.get("/me/permissions")
+def get_my_permissions(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """מחזיר למשתמש המחובר את הרשאות התצוגה שלו.
+    הורה — הכל פתוח. ילד — לפי visible_sections שהוגדרו ע"י ההורה ב-/family/children/{id}/permissions.
+    הפרונט קורא לזה מיד אחרי login כדי לדעת אילו קטעים להציג בדשבורד."""
+    user_id = verify_jwt_token(credentials.credentials)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="טוקן לא תקין")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="משתמש לא נמצא")
+
+    if user.role == UserRole.PARENT:
+        return {"role": "parent", "visible_sections": {k: True for k in _DEFAULT_VISIBLE}}
+
+    # ילד — שולף מה-ChildProfile
+    profile = db.query(ChildProfile).filter(ChildProfile.user_id == user_id).first()
+    sections = (profile.visible_sections if profile and profile.visible_sections else {}) or {}
+    merged = {**_DEFAULT_VISIBLE, **sections}
+    merged.update({k: False for k in _PARENT_ONLY_SECTIONS})
+    return {"role": "child", "visible_sections": merged}
 
 
 def get_current_user_dep(

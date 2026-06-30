@@ -57,6 +57,21 @@ class ChildProfile(Base):
     notes = Column(Text)  # הערה חופשית — כל מידע נוסף שלא מתאים לשדה ייעודי
     avatar_emoji = Column(String, default="🧒")
     color_theme = Column(String, default="#6C63FF")
+    # הרשאות תצוגה — מה הילד רואה כשמתחבר עם ה-Gmail שלו במכשיר האישי.
+    # ברירת מחדל: כל הקטעים פתוחים (אין regression לפרופילים קיימים).
+    # הורה יכול לכבות/להדליק כל קטע בנפרד דרך PATCH /family/children/{id}/permissions.
+    # payments/maintenance תמיד כבויים לילד — ניהול כספים/תחזוקה הוא domain של הורה בלבד.
+    visible_sections = Column(JSON, default=lambda: {
+        "calendar": True,
+        "tasks": True,
+        "routines": True,
+        "points": True,
+        "homework": True,
+        "meals": True,
+        "ai_corner": True,
+        "payments": False,
+        "maintenance": False,
+    })
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

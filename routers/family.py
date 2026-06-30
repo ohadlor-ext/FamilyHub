@@ -223,6 +223,72 @@ def update_member(
     return {"message": "פרופיל עודכן"}
 
 
+# ――― הרשאות ילד ―――
+
+# כל המפתחות האפשריים שניתן לשלוט בהם. payments/maintenance תמיד כבויים לילד —
+# נשמרים כ-False גם אם ההורה שולח True (לא חושפים מודולי ניהול כספי/תחזוקה לילדים).
+_CHILD_SECTIONS = {"calendar", "tasks", "routines", "points", "homework", "meals", "ai_corner"}
+_PARENT_ONLY_SECTIONS = {"payments", "maintenance"}
+
+_DEFAULT_VISIBLE: dict = {
+    "calendar": True, "tasks": True, "routines": True,
+    "points": True, "homework": True, "meals": True,
+    "ai_corner": True, "payments": False, "maintenance": False,
+}
+
+
+class PermissionsUpdate(BaseModel):
+    visible_sections: dict  # {"calendar": true/false, ...}
+
+
+@router.get("/children/{child_id}/permissions")
+def get_child_permissions(
+    child_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """מחזיר את הרשאות התצוגה של ילד — גלוי להורים ולילד עצמו."""
+    child = db.query(User).filter(User.id == child_id, User.role == UserRole.CHILD, User.is_active == True).first()
+    if not child:
+        raise HTTPException(status_code=404, detail="ילד לא נמצא")
+
+    profile = db.query(ChildProfile).filter(ChildProfile.user_id == child_id).first()
+    sections = (profile.visible_sections if profile and profile.visible_sections else {}) or {}
+    # תמיד מחזיר את כל המפתחות (גם אם ה-JSON ישן בלי כל המפתחות)
+    merged = {**_DEFAULT_VISIBLE, **sections}
+    merged.update({k: False for k in _PARENT_ONLY_SECTIONS})  # payments/maintenance תמיד כבוי
+    return {"child_id": child_id, "visible_sections": merged}
+
+
+@router.patch("/children/{child_id}/permissions")
+def update_child_permissions(
+    child_id: int,
+    body: PermissionsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """הורה מעדכן מה הילד רואה כשמתחבר עם ה-Gmail שלו. payments/maintenance תמיד כבויים."""
+    _require_parent(current_user)
+
+    child = db.query(User).filter(User.id == child_id, User.role == UserRole.CHILD, User.is_active == True).first()
+    if not child:
+        raise HTTPException(status_code=404, detail="ילד לא נמצא")
+
+    profile = db.query(ChildProfile).filter(ChildProfile.user_id == child_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="פרופיל ילד לא נמצא")
+
+    # מקבל רק מפתחות מוכרים, ומכריח payments/maintenance=False
+    current = dict(profile.visible_sections or _DEFAULT_VISIBLE)
+    for key, val in body.visible_sections.items():
+        if key in _CHILD_SECTIONS:
+            current[key] = bool(val)
+    current.update({k: False for k in _PARENT_ONLY_SECTIONS})
+    profile.visible_sections = current
+    db.commit()
+    return {"child_id": child_id, "visible_sections": current}
+
+
 @router.delete("/children/{child_id}")
 def delete_child(
     child_id: int,
