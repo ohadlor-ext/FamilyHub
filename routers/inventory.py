@@ -112,7 +112,7 @@ def list_inventory(
                 "unit": item.unit,
                 "min_quantity": item.min_quantity,
                 "location": item.location,
-                "low_stock": item.quantity <= item.min_quantity,
+                "low_stock": item.min_quantity > 0 and item.quantity < item.min_quantity,
                 "on_shopping_list": item.on_shopping_list,
                 "barcode": item.barcode,
             }
@@ -359,6 +359,7 @@ def apply_receipt_items(
             category=entry.category,
             quantity=entry.quantity,
             unit=entry.unit,
+            min_quantity=0,  # קבלה לא יודעת מהו המינימום — לא לסמן חסר מיד
             added_by=current_user.id,
             last_purchased=datetime.now(timezone.utc),
         )
