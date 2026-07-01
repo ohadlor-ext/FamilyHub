@@ -15,7 +15,7 @@ from services.notifications import notify_low_stock
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
-MAX_IMAGE_DIMENSION = 1568  # המלצת Anthropic — מקטין עלות טוקנים בלי לפגוע בזיהוי
+MAX_IMAGE_DIMENSION = 4096  # מוגדל לתמיכה ב-PDF רב-עמודים — קבלה משורשרת יכולה להיות גבוהה מאוד
 
 
 def _process_image_upload(file: UploadFile) -> tuple:
