@@ -16,7 +16,7 @@ from database import get_db
 from routers.auth import get_current_user_dep
 from models.user import User, ChildProfile
 from models.inventory import InventoryItem, ShoppingListItem, InventoryUnit
-from models.recipe import RecipeSuggestion
+from models.recipe import RecipeSuggestion, Recipe
 from services.claude_ai import get_recipe_suggestion
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
@@ -175,3 +175,53 @@ def confirm_missing(
         added += 1
     db.commit()
     return {"message": "נוספו לרשימת הקניות", "added": added}
+
+def _ingredient_matches_inventory(ing_name: str, inv_names: list) -> bool:
+    n = ing_name.strip().lower()
+    if not n:
+        return False
+    for inv in inv_names:
+        if n in inv or inv in n:
+            return True
+    return False
+
+
+@router.get("/match-inventory")
+def match_inventory(
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user_dep),
+):
+    """מחזיר את כל המתכונים השמורים ממוינים לפי % חפיפה עם המלאי הנוכחי."""
+    recipes = db.query(Recipe).filter(Recipe.is_active == True).all()
+    inventory = _active_inventory(db)
+    inv_names = [item.name.strip().lower() for item in inventory]
+
+    result = []
+    for recipe in recipes:
+        ingredients = recipe.ingredients or []
+        if not ingredients:
+            continue
+        available, missing = [], []
+        for ing in ingredients:
+            name = ing.get("name", "")
+            if _ingredient_matches_inventory(name, inv_names):
+                available.append(name)
+            else:
+                missing.append(name)
+        total = len(ingredients)
+        match_pct = int(len(available) / total * 100) if total else 0
+        result.append({
+            "id": recipe.id,
+            "title": recipe.title,
+            "description": recipe.description or "",
+            "prep_time_minutes": recipe.prep_time_minutes,
+            "servings": recipe.servings,
+            "tags": recipe.tags or [],
+            "match_pct": match_pct,
+            "available_count": len(available),
+            "total_count": total,
+            "missing_ingredients": missing,
+        })
+
+    result.sort(key=lambda r: r["match_pct"], reverse=True)
+    return result
