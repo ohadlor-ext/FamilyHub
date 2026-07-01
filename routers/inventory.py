@@ -154,6 +154,34 @@ def add_item(
     return {"message": "פריט נוסף", "item_id": item.id}
 
 
+@router.delete("/clear")
+def clear_all_inventory(
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user_dep),
+):
+    """מחיקת כל פריטי המלאי (soft-delete — is_active=False)."""
+    db.query(InventoryItem).filter(InventoryItem.is_active == True).update(
+        {"is_active": False}, synchronize_session=False
+    )
+    db.commit()
+    return {"message": "כל המלאי נמחק"}
+
+
+@router.delete("/{item_id}")
+def delete_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user_dep),
+):
+    """מחיקת פריט בודד מהמלאי (soft-delete)."""
+    item = db.query(InventoryItem).filter(InventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="פריט לא נמצא")
+    item.is_active = False
+    db.commit()
+    return {"message": "פריט נמחק"}
+
+
 @router.patch("/{item_id}")
 def update_item(
     item_id: int,
